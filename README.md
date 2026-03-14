@@ -6,7 +6,11 @@ Clean, modular, production-ready baseline for **thermal/infrared UAV detection a
 - Optional **ReID toggle** (off by default)
 - **MOT-format export**: `frame,id,x,y,w,h,score,-1,-1,-1`
 
-This repository is intentionally general-purpose and not tied to any competition-specific conventions.
+This repository supports both:
+- **single-UAV experiments** such as Anti-UAV Track 2
+- **multi-UAV experiments** when the raw annotations provide multiple boxes per frame
+
+The runtime pipeline is intentionally general-purpose and not tied to any competition-specific conventions.
 
 ## 1) Project Structure
 
@@ -63,7 +67,7 @@ data/
       test/
 ```
 
-Label format (single class `uav`):
+Label format (single class `uav`, one or more boxes per frame):
 
 ```text
 0 x_center y_center width height
@@ -104,12 +108,12 @@ Checks include:
 - empty label files
 - class statistics
 
-### Convert Anti-UAV Track 2 Raw Data
+### Convert Anti-UAV Raw Data
 
 If you extracted the official release into `data/raw/train`, convert it into the YOLO layout with:
 
 ```bash
-python -m src.utils.prepare_anti_uav_track2 \
+python -m src.utils.prepare_anti_uav \
   --raw-train-dir data/raw/train \
   --output-root data/thermal_uav \
   --val-ratio 0.2 \
@@ -118,7 +122,46 @@ python -m src.utils.prepare_anti_uav_track2 \
 
 Notes:
 - The converter splits by sequence, not by frame, to avoid train/val leakage.
-- Official `track2_test` can remain under `data/raw/track2_test/` and be used later as an inference source.
+- It auto-detects common Anti-UAV annotation layouts for **single-target** and **multi-target** training data.
+- It also auto-detects the 4th Anti-UAV Track 3 layout with `TrainVideos/` plus `TrainLabels/` and decodes videos directly into frame-level YOLO samples.
+- Official `track2_test` or `track3_test` can remain under `data/raw/...` and be used later as an inference source.
+
+If you have **Track 1/2 raw frame folders** plus **Track 3 raw videos**, build the combined training set by running the converter twice into the same output root:
+
+```bash
+python -m src.utils.prepare_anti_uav \
+  --raw-train-dir data/raw_track1_2/train \
+  --output-root data/thermal_uav \
+  --val-ratio 0.2 \
+  --clear-output
+
+python -m src.utils.prepare_anti_uav \
+  --raw-train-dir data/raw_track3/MultiUAV_Train \
+  --output-root data/thermal_uav \
+  --task multi \
+  --val-ratio 0.2
+```
+
+For Track 3, you can also call:
+
+```bash
+python -m src.utils.prepare_anti_uav_track3 \
+  --raw-train-dir data/raw_track3/MultiUAV_Train \
+  --output-root data/thermal_uav \
+  --task multi \
+  --val-ratio 0.2
+```
+
+Prepare test images as well:
+
+```bash
+python -m src.utils.prepare_anti_uav \
+  --raw-train-dir data/raw/train \
+  --raw-test-dir data/raw/track2_test \
+  --output-root data/thermal_uav \
+  --val-ratio 0.2 \
+  --clear-output
+```
 
 ## 3) Installation
 
@@ -224,6 +267,10 @@ Outputs:
 - optional annotated frames: `frames/`
 - MOT file: `tracks_mot.txt` with rows:
   `frame,id,x,y,w,h,score,-1,-1,-1`
+
+The same tracker entry point works for:
+- single-UAV sequences
+- multi-UAV sequences with multiple detections per frame
 
 ## 8) ReID Toggle
 

@@ -37,7 +37,7 @@ def str2bool(value: str) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run detector-only inference for thermal UAV data.")
+    parser = argparse.ArgumentParser(description="Run detector-only inference for single or multi-UAV thermal data.")
     parser.add_argument("--config", type=str, default=None, help="Optional YAML config path.")
     parser.add_argument("--weights", type=str, default=None, help="Path to detector weights.")
     parser.add_argument("--source", type=str, default=None, help="Source video file or frame folder.")
