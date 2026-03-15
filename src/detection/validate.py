@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import torch
 import yaml
 from ultralytics import YOLO
 
 from src.utils.paths import make_run_dir
+from src.utils.project import find_project_root, resolve_project_path
 
 DEFAULTS: dict[str, Any] = {
     "weights": "runs/detect/yolo12n_thermal_uav/weights/best.pt",
@@ -69,6 +71,26 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
     return cfg
 
 
+def resolve_device(device: str | None) -> str:
+    if device is None:
+        return "0" if torch.cuda.is_available() else "cpu"
+
+    lowered = str(device).strip().lower()
+    if lowered == "auto":
+        return "0" if torch.cuda.is_available() else "cpu"
+    return str(device)
+
+
+def resolve_validation_config(cfg: dict[str, Any], project_root: Path | None = None) -> dict[str, Any]:
+    root = project_root or find_project_root()
+    resolved = cfg.copy()
+    resolved["weights"] = str(resolve_project_path(resolved["weights"], root, must_exist=True))
+    resolved["data"] = str(resolve_project_path(resolved["data"], root, must_exist=True))
+    resolved["project"] = str(resolve_project_path(resolved["project"], root, must_exist=False))
+    resolved["device"] = resolve_device(resolved.get("device"))
+    return resolved
+
+
 def to_jsonable_metrics(metrics: Any) -> dict[str, Any]:
     results_dict = getattr(metrics, "results_dict", {}) or {}
     jsonable = {}
@@ -83,32 +105,23 @@ def to_jsonable_metrics(metrics: Any) -> dict[str, Any]:
     return jsonable
 
 
-def main() -> None:
-    args = parse_args()
-    cfg = build_config(args)
-
-    weights_path = Path(cfg["weights"])
-    data_yaml = Path(cfg["data"])
-    if not weights_path.exists():
-        raise FileNotFoundError(f"Weights not found: {weights_path}")
-    if not data_yaml.exists():
-        raise FileNotFoundError(f"Dataset YAML not found: {data_yaml}")
-
-    save_dir = make_run_dir(cfg["project"], cfg["name"], exist_ok=cfg["exist_ok"])
+def run_validation(cfg: dict[str, Any], project_root: Path | None = None) -> Path:
+    resolved_cfg = resolve_validation_config(cfg, project_root=project_root)
+    save_dir = make_run_dir(resolved_cfg["project"], resolved_cfg["name"], exist_ok=resolved_cfg["exist_ok"])
 
     print("Validation config:")
-    for key in sorted(cfg.keys()):
-        print(f"  {key}: {cfg[key]}")
+    for key in sorted(resolved_cfg.keys()):
+        print(f"  {key}: {resolved_cfg[key]}")
     print(f"  save_dir: {save_dir}")
 
-    model = YOLO(str(weights_path))
+    model = YOLO(str(resolved_cfg["weights"]))
     metrics = model.val(
-        data=cfg["data"],
-        split=cfg["split"],
-        imgsz=cfg["imgsz"],
-        batch=cfg["batch"],
-        device=cfg["device"],
-        workers=cfg["workers"],
+        data=resolved_cfg["data"],
+        split=resolved_cfg["split"],
+        imgsz=resolved_cfg["imgsz"],
+        batch=resolved_cfg["batch"],
+        device=resolved_cfg["device"],
+        workers=resolved_cfg["workers"],
         project=str(save_dir.parent),
         name=save_dir.name,
         exist_ok=True,
@@ -126,6 +139,13 @@ def main() -> None:
     else:
         print("  Metrics dictionary is empty. Check Ultralytics logs in run directory.")
     print(f"\n[OK] Metrics saved to: {metrics_file.resolve()}")
+    return metrics_file
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = build_config(args)
+    run_validation(cfg)
 
 
 if __name__ == "__main__":

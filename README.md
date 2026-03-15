@@ -183,6 +183,19 @@ pip install -r requirements.txt
 python -m src.detection.train --config configs/train_detector.yaml
 ```
 
+The same training entry point is now callable directly from notebooks:
+
+```python
+from pathlib import Path
+from src.detection.train import load_yaml, run_training
+from src.utils.project import find_project_root
+
+project_root = find_project_root()
+cfg = load_yaml(project_root / "configs" / "train_detector.yaml")
+cfg.update({"device": "auto", "epochs": 1, "imgsz": 640, "batch": 8})
+save_dir = run_training(cfg, project_root=project_root)
+```
+
 ### Option B: CLI overrides
 
 ```bash
@@ -303,6 +316,13 @@ Typical flow in Colab:
 5. Train detector.
 6. Validate detector.
 7. Run detection + tracking and export MOT results.
+
+On SCC Jupyter:
+1. Start the notebook from the same conda environment you prepared for training.
+2. Open `notebooks/train_detector.ipynb`.
+3. Run the CUDA probe cell before training.
+4. Start with the notebook smoke-test config.
+5. Increase epochs/image size/batch only after the smoke test succeeds.
 
 ## 10) First Things To Run
 

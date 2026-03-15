@@ -4,8 +4,11 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+import torch
 import yaml
 from ultralytics import YOLO
+
+from src.utils.project import find_project_root, resolve_project_path
 
 DEFAULTS: dict[str, Any] = {
     "model": "yolo12n.pt",
@@ -77,41 +80,68 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
     return cfg
 
 
+def resolve_device(device: str | None) -> str:
+    if device is None:
+        return "0" if torch.cuda.is_available() else "cpu"
+
+    lowered = str(device).strip().lower()
+    if lowered == "auto":
+        return "0" if torch.cuda.is_available() else "cpu"
+    return str(device)
+
+
+def resolve_training_config(cfg: dict[str, Any], project_root: Path | None = None) -> dict[str, Any]:
+    root = project_root or find_project_root()
+    resolved = cfg.copy()
+
+    data_yaml = resolve_project_path(resolved["data"], root, must_exist=True)
+    resolved["data"] = str(data_yaml)
+
+    model_value = str(resolved["model"])
+    model_path = Path(model_value)
+    if model_path.is_absolute() or any(sep in model_value for sep in ("/", "\\")):
+        resolved["model"] = str(resolve_project_path(model_path, root, must_exist=True))
+
+    resolved["project"] = str(resolve_project_path(resolved["project"], root, must_exist=False))
+    resolved["device"] = resolve_device(resolved.get("device"))
+    return resolved
+
+
+def run_training(cfg: dict[str, Any], project_root: Path | None = None) -> Path:
+    resolved_cfg = resolve_training_config(cfg, project_root=project_root)
+
+    print("Training config:")
+    for key in sorted(resolved_cfg.keys()):
+        print(f"  {key}: {resolved_cfg[key]}")
+
+    model = YOLO(resolved_cfg["model"])
+    model.train(
+        data=resolved_cfg["data"],
+        imgsz=resolved_cfg["imgsz"],
+        batch=resolved_cfg["batch"],
+        epochs=resolved_cfg["epochs"],
+        device=resolved_cfg["device"],
+        workers=resolved_cfg["workers"],
+        project=resolved_cfg["project"],
+        name=resolved_cfg["name"],
+        pretrained=resolved_cfg["pretrained"],
+        optimizer=resolved_cfg["optimizer"],
+        lr0=resolved_cfg["lr0"],
+        patience=resolved_cfg["patience"],
+        cache=resolved_cfg["cache"],
+        exist_ok=resolved_cfg["exist_ok"],
+    )
+
+    save_dir = Path(getattr(model.trainer, "save_dir", Path(resolved_cfg["project"]) / resolved_cfg["name"])).resolve()
+    print(f"\n[OK] Training finished. Artifacts saved in: {save_dir}")
+    print(f"[OK] Best checkpoint (expected): {(save_dir / 'weights' / 'best.pt').resolve()}")
+    return save_dir
+
+
 def main() -> None:
     args = parse_args()
     cfg = build_config(args)
-
-    data_yaml = Path(cfg["data"])
-    if not data_yaml.exists():
-        raise FileNotFoundError(
-            f"Dataset YAML not found: {data_yaml}. Update configs/dataset_thermal_uav.yaml before training."
-        )
-
-    print("Training config:")
-    for key in sorted(cfg.keys()):
-        print(f"  {key}: {cfg[key]}")
-
-    model = YOLO(cfg["model"])
-    model.train(
-        data=cfg["data"],
-        imgsz=cfg["imgsz"],
-        batch=cfg["batch"],
-        epochs=cfg["epochs"],
-        device=cfg["device"],
-        workers=cfg["workers"],
-        project=cfg["project"],
-        name=cfg["name"],
-        pretrained=cfg["pretrained"],
-        optimizer=cfg["optimizer"],
-        lr0=cfg["lr0"],
-        patience=cfg["patience"],
-        cache=cfg["cache"],
-        exist_ok=cfg["exist_ok"],
-    )
-
-    save_dir = Path(getattr(model.trainer, "save_dir", Path(cfg["project"]) / cfg["name"]))
-    print(f"\n[OK] Training finished. Artifacts saved in: {save_dir.resolve()}")
-    print(f"[OK] Best checkpoint (expected): {(save_dir / 'weights' / 'best.pt').resolve()}")
+    run_training(cfg)
 
 
 if __name__ == "__main__":
