@@ -290,6 +290,11 @@ The same tracker entry point works for:
 Default is disabled in:
 - `configs/tracker_botsort.yaml` (`with_reid: false`)
 
+The default tracker config is tuned for thermal UAV footage:
+- lower thresholds to reduce track resets
+- larger `track_buffer` to survive short detection misses
+- `gmc_method: None` to avoid unstable sparse optical flow on low-texture thermal scenes
+
 Enable from CLI without editing config:
 
 ```bash
