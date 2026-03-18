@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "cache": False,
     "exist_ok": False,
 }
+OPTIONAL_TRAIN_ARGS = ("amp", "verbose", "seed", "deterministic")
 
 
 def str2bool(value: str) -> bool:
@@ -38,8 +39,19 @@ def str2bool(value: str) -> bool:
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
 
+def str2cache(value: str) -> bool | str:
+    lowered = value.lower()
+    if lowered in {"1", "true", "yes", "y"}:
+        return True
+    if lowered in {"0", "false", "no", "n"}:
+        return False
+    if lowered in {"ram", "disk"}:
+        return lowered
+    raise argparse.ArgumentTypeError(f"Invalid cache value: {value}")
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a YOLOv12 detector for single or multi-UAV thermal detection.")
+    parser = argparse.ArgumentParser(description="Train a YOLOv12 detector for single or multi-UAV thermal or RGB detection.")
     parser.add_argument("--config", type=str, default=None, help="Optional YAML config path.")
     parser.add_argument("--model", type=str, default=None, help="Model weights or model YAML (e.g., yolo12n.pt).")
     parser.add_argument("--data", type=str, default=None, help="Dataset YAML path.")
@@ -54,7 +66,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--optimizer", type=str, default=None, help="Optimizer choice (auto/SGD/Adam/AdamW).")
     parser.add_argument("--lr0", type=float, default=None, help="Initial learning rate.")
     parser.add_argument("--patience", type=int, default=None, help="Early stopping patience.")
-    parser.add_argument("--cache", type=str2bool, default=None, help="Cache images for faster training.")
+    parser.add_argument("--cache", type=str2cache, default=None, help='Cache images (true/false/"ram"/"disk").')
+    parser.add_argument("--amp", type=str2bool, default=None, help="Enable automatic mixed precision.")
+    parser.add_argument("--verbose", type=str2bool, default=None, help="Enable verbose Ultralytics logging.")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for training.")
+    parser.add_argument("--deterministic", type=str2bool, default=None, help="Enable deterministic training mode.")
     parser.add_argument("--exist_ok", type=str2bool, default=None, help="Allow overwriting existing run folder.")
     return parser.parse_args()
 
@@ -114,23 +130,29 @@ def run_training(cfg: dict[str, Any], project_root: Path | None = None) -> Path:
     for key in sorted(resolved_cfg.keys()):
         print(f"  {key}: {resolved_cfg[key]}")
 
+    train_kwargs: dict[str, Any] = {
+        "data": resolved_cfg["data"],
+        "imgsz": resolved_cfg["imgsz"],
+        "batch": resolved_cfg["batch"],
+        "epochs": resolved_cfg["epochs"],
+        "device": resolved_cfg["device"],
+        "workers": resolved_cfg["workers"],
+        "project": resolved_cfg["project"],
+        "name": resolved_cfg["name"],
+        "pretrained": resolved_cfg["pretrained"],
+        "optimizer": resolved_cfg["optimizer"],
+        "lr0": resolved_cfg["lr0"],
+        "patience": resolved_cfg["patience"],
+        "cache": resolved_cfg["cache"],
+        "exist_ok": resolved_cfg["exist_ok"],
+    }
+    for key in OPTIONAL_TRAIN_ARGS:
+        value = resolved_cfg.get(key)
+        if value is not None:
+            train_kwargs[key] = value
+
     model = YOLO(resolved_cfg["model"])
-    model.train(
-        data=resolved_cfg["data"],
-        imgsz=resolved_cfg["imgsz"],
-        batch=resolved_cfg["batch"],
-        epochs=resolved_cfg["epochs"],
-        device=resolved_cfg["device"],
-        workers=resolved_cfg["workers"],
-        project=resolved_cfg["project"],
-        name=resolved_cfg["name"],
-        pretrained=resolved_cfg["pretrained"],
-        optimizer=resolved_cfg["optimizer"],
-        lr0=resolved_cfg["lr0"],
-        patience=resolved_cfg["patience"],
-        cache=resolved_cfg["cache"],
-        exist_ok=resolved_cfg["exist_ok"],
-    )
+    model.train(**train_kwargs)
 
     save_dir = Path(getattr(model.trainer, "save_dir", Path(resolved_cfg["project"]) / resolved_cfg["name"])).resolve()
     print(f"\n[OK] Training finished. Artifacts saved in: {save_dir}")

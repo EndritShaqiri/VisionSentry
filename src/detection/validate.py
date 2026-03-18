@@ -36,7 +36,9 @@ def str2bool(value: str) -> bool:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate a trained YOLO thermal UAV detector on single or multi-UAV data.")
+    parser = argparse.ArgumentParser(
+        description="Validate a trained YOLO UAV detector on single or multi-UAV thermal or RGB data."
+    )
     parser.add_argument("--config", type=str, default=None, help="Optional YAML config path.")
     parser.add_argument("--weights", type=str, default=None, help="Path to trained detector weights.")
     parser.add_argument("--data", type=str, default=None, help="Dataset YAML path.")

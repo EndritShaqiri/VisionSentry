@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import shutil
 from dataclasses import dataclass
@@ -14,6 +15,14 @@ import cv2
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv", ".m4v"}
+MODALITY_ALIASES = {
+    "ir": ("ir", "infrared", "thermal"),
+    "rgb": ("rgb", "visible", "vis", "color", "colour"),
+}
+MODALITY_LABEL_FILENAMES = {
+    "ir": ("IR_label.json", "infrared_label.json", "thermal_label.json"),
+    "rgb": ("RGB_label.json", "visible_label.json", "vis_label.json", "color_label.json", "colour_label.json"),
+}
 T = TypeVar("T")
 
 
@@ -57,6 +66,13 @@ def parse_args() -> argparse.Namespace:
         help="YOLO dataset root directory.",
     )
     parser.add_argument(
+        "--modality",
+        type=str,
+        default="ir",
+        choices=sorted(MODALITY_ALIASES.keys()),
+        help="Input modality for frame-based Anti-UAV sequence layouts.",
+    )
+    parser.add_argument(
         "--task",
         type=str,
         default="auto",
@@ -79,6 +95,12 @@ def parse_args() -> argparse.Namespace:
         "--copy-images",
         action="store_true",
         help="Copy images instead of using hard links when possible.",
+    )
+    parser.add_argument(
+        "--split-manifest",
+        type=str,
+        default=None,
+        help="Optional JSON split manifest path. Existing manifests are reused; otherwise a new one is written.",
     )
     parser.add_argument(
         "--clear-output",
@@ -118,13 +140,89 @@ def safe_link_or_copy(src: Path, dst: Path, copy_images: bool) -> None:
         shutil.copy2(src, dst)
         return
     try:
-        dst.hardlink_to(src)
+        os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
 
 
 def sort_key(item: T) -> str:
     return getattr(item, "name", str(item))
+
+
+def contains_modality_token(value: str, modality: str) -> bool:
+    lowered = value.lower()
+    return any(token in lowered for token in MODALITY_ALIASES[modality])
+
+
+def default_split_manifest_path(raw_train_dir: Path, seed: int) -> Path:
+    return raw_train_dir.parent / f"{raw_train_dir.name}_split_seed{seed}.json"
+
+
+def load_split_manifest(manifest_path: Path) -> dict:
+    with manifest_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_split_manifest(
+    manifest_path: Path,
+    raw_train_dir: Path,
+    modality: str,
+    val_ratio: float,
+    seed: int,
+    train_sequences: list[T],
+    val_sequences: list[T],
+) -> None:
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "raw_train_dir": str(raw_train_dir.resolve()),
+        "modality": modality,
+        "seed": seed,
+        "val_ratio": val_ratio,
+        "train": [item.name for item in train_sequences],
+        "val": [item.name for item in val_sequences],
+    }
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def split_sequences_with_manifest(
+    sequence_items: list[T],
+    *,
+    val_ratio: float,
+    seed: int,
+    manifest_path: Path,
+    raw_train_dir: Path,
+    modality: str,
+) -> tuple[list[T], list[T], str]:
+    items_by_name = {item.name: item for item in sequence_items}
+
+    if manifest_path.exists():
+        manifest = load_split_manifest(manifest_path)
+        train_names = manifest.get("train", [])
+        val_names = manifest.get("val", [])
+        expected_names = set(items_by_name)
+        manifest_names = set(train_names) | set(val_names)
+        missing = sorted(expected_names - manifest_names)
+        extra = sorted(manifest_names - expected_names)
+        if missing or extra:
+            raise ValueError(
+                f"Split manifest {manifest_path} does not match the discovered sequences. "
+                f"missing={missing}, extra={extra}"
+            )
+        train_sequences = [items_by_name[name] for name in train_names]
+        val_sequences = [items_by_name[name] for name in val_names]
+        return train_sequences, val_sequences, "reused"
+
+    train_sequences, val_sequences = split_sequences(sequence_items, val_ratio=val_ratio, seed=seed)
+    write_split_manifest(
+        manifest_path=manifest_path,
+        raw_train_dir=raw_train_dir,
+        modality=modality,
+        val_ratio=val_ratio,
+        seed=seed,
+        train_sequences=train_sequences,
+        val_sequences=val_sequences,
+    )
+    return train_sequences, val_sequences, "created"
 
 
 def split_sequences(sequence_items: list[T], val_ratio: float, seed: int) -> tuple[list[T], list[T]]:
@@ -182,15 +280,11 @@ def is_rect_candidate(value: object) -> bool:
     return isinstance(value, list) and len(value) == 4 and all(isinstance(v, (int, float)) for v in value)
 
 
-def parse_single_or_multi_json(sequence_dir: Path, task: str) -> tuple[list[list[list[float]]], str] | None:
-    label_path = sequence_dir / "IR_label.json"
-    if not label_path.exists():
-        return None
-
-    payload = load_json(label_path)
+def parse_single_or_multi_json(annotation_path: Path, task: str) -> tuple[list[list[list[float]]], str]:
+    payload = load_json(annotation_path)
     gt_rect = payload.get("gt_rect")
     if not isinstance(gt_rect, list):
-        raise ValueError(f"Unsupported IR_label.json schema in {sequence_dir}")
+        raise ValueError(f"Unsupported {annotation_path.name} schema in {annotation_path.parent}")
 
     # Track 2 style: one bbox per frame with optional exist flags.
     if gt_rect and is_rect_candidate(gt_rect[0]):
@@ -199,7 +293,7 @@ def parse_single_or_multi_json(sequence_dir: Path, task: str) -> tuple[list[list
         for idx, rect in enumerate(gt_rect):
             visible = exists[idx] == 1 if idx < len(exists) else True
             frames.append([rect] if visible else [])
-        return frames, "single_json"
+        return frames, f"{annotation_path.stem}_single_json"
 
     # Generic multi-target JSON: one list of bboxes per frame.
     if gt_rect and isinstance(gt_rect[0], list):
@@ -216,9 +310,9 @@ def parse_single_or_multi_json(sequence_dir: Path, task: str) -> tuple[list[list
 
         if task == "single":
             frames_multi = [[frame_boxes[0]] if frame_boxes else [] for frame_boxes in frames_multi]
-        return frames_multi, "multi_json"
+        return frames_multi, f"{annotation_path.stem}_multi_json"
 
-    return [], "empty_json"
+    return [], f"{annotation_path.stem}_empty_json"
 
 
 def parse_mot_annotation_file(annotation_path: Path, task: str) -> tuple[list[list[list[float]]], str]:
@@ -266,19 +360,59 @@ def parse_mot_annotations(sequence_dir: Path, task: str) -> tuple[list[list[list
     return parse_mot_annotation_file(annotation_path, task=task)
 
 
-def load_sequence_annotations(sequence_dir: Path, task: str) -> tuple[list[list[list[float]]], str]:
-    parsed = parse_single_or_multi_json(sequence_dir, task=task)
-    if parsed is not None:
-        return parsed
+def resolve_sequence_annotation_path(sequence_dir: Path, modality: str) -> Path | None:
+    for candidate_name in MODALITY_LABEL_FILENAMES[modality]:
+        candidate = sequence_dir / candidate_name
+        if candidate.exists():
+            return candidate
 
-    parsed = parse_mot_annotations(sequence_dir, task=task)
-    if parsed is not None:
-        return parsed
+    json_candidates = sorted(path for path in sequence_dir.glob("*.json") if path.is_file())
+    token_matches = [path for path in json_candidates if contains_modality_token(path.stem, modality)]
+    if len(token_matches) == 1:
+        return token_matches[0]
 
-    raise FileNotFoundError(
-        f"No supported annotation file found in {sequence_dir}. "
-        "Expected IR_label.json or a MOT-style gt.txt file."
-    )
+    label_jsons = [path for path in json_candidates if path.name.lower().endswith("_label.json")]
+    if len(label_jsons) == 1:
+        return label_jsons[0]
+
+    return None
+
+
+def resolve_sequence_media_source(sequence_dir: Path, modality: str) -> tuple[Path, str]:
+    preferred_frame_dirs = [
+        path
+        for path in sorted(sequence_dir.iterdir())
+        if path.is_dir() and contains_modality_token(path.name, modality) and list_frame_files(path)
+    ]
+    if preferred_frame_dirs:
+        return preferred_frame_dirs[0], "frame_dir"
+
+    top_level_frames = list_frame_files(sequence_dir)
+    if top_level_frames:
+        return sequence_dir, "frame_dir"
+
+    preferred_videos = [
+        path
+        for path in list_video_files(sequence_dir)
+        if contains_modality_token(path.stem, modality) or contains_modality_token(path.name, modality)
+    ]
+    if preferred_videos:
+        return preferred_videos[0], "video_file"
+
+    all_videos = list_video_files(sequence_dir)
+    if len(all_videos) == 1:
+        return all_videos[0], "video_file"
+
+    raise FileNotFoundError(f"Could not resolve {modality} media for sequence: {sequence_dir}")
+
+
+def load_annotations_for_source(source: SequenceSource, task: str) -> tuple[list[list[list[float]]], str]:
+    if source.annotation_path is None:
+        raise FileNotFoundError(f"No annotation path provided for sequence source: {source.name}")
+
+    if source.annotation_path.suffix.lower() == ".json":
+        return parse_single_or_multi_json(source.annotation_path, task=task)
+    return parse_mot_annotation_file(source.annotation_path, task=task)
 
 
 def resolve_track3_video_layout(raw_dir: Path) -> tuple[Path | None, Path | None]:
@@ -322,7 +456,7 @@ def find_track3_label_path(video_path: Path, video_dir: Path, label_dir: Path | 
     )
 
 
-def list_train_sources(raw_dir: Path) -> list[SequenceSource]:
+def list_train_sources(raw_dir: Path, modality: str) -> list[SequenceSource]:
     video_dir, label_dir = resolve_track3_video_layout(raw_dir)
     if video_dir is not None:
         return [
@@ -335,13 +469,33 @@ def list_train_sources(raw_dir: Path) -> list[SequenceSource]:
             for video_path in list_video_files(video_dir)
         ]
 
-    return [
-        SequenceSource(name=sequence_dir.name, media_path=sequence_dir, annotation_path=None, media_kind="frame_dir")
-        for sequence_dir in list_sequence_dirs(raw_dir)
-    ]
+    sources: list[SequenceSource] = []
+    for sequence_dir in list_sequence_dirs(raw_dir):
+        media_path, media_kind = resolve_sequence_media_source(sequence_dir, modality=modality)
+        annotation_path = resolve_sequence_annotation_path(sequence_dir, modality=modality)
+        if annotation_path is None and media_kind == "frame_dir":
+            parsed = parse_mot_annotations(sequence_dir, task="auto")
+            if parsed is None:
+                raise FileNotFoundError(
+                    f"No supported annotation file found in {sequence_dir} for modality={modality}. "
+                    "Expected a modality-specific *_label.json or a MOT-style gt.txt file."
+                )
+            for candidate in (sequence_dir / "gt" / "gt.txt", sequence_dir / "gt.txt", sequence_dir / "annotations.txt"):
+                if candidate.exists():
+                    annotation_path = candidate
+                    break
+        sources.append(
+            SequenceSource(
+                name=sequence_dir.name,
+                media_path=media_path,
+                annotation_path=annotation_path,
+                media_kind=media_kind,
+            )
+        )
+    return sources
 
 
-def list_test_sources(raw_dir: Path) -> list[SequenceSource]:
+def list_test_sources(raw_dir: Path, modality: str) -> list[SequenceSource]:
     video_dir, _ = resolve_track3_video_layout(raw_dir)
     if video_dir is not None:
         return [
@@ -356,10 +510,13 @@ def list_test_sources(raw_dir: Path) -> list[SequenceSource]:
             for video_path in direct_videos
         ]
 
-    return [
-        SequenceSource(name=sequence_dir.name, media_path=sequence_dir, annotation_path=None, media_kind="frame_dir")
-        for sequence_dir in list_sequence_dirs(raw_dir)
-    ]
+    sources: list[SequenceSource] = []
+    for sequence_dir in list_sequence_dirs(raw_dir):
+        media_path, media_kind = resolve_sequence_media_source(sequence_dir, modality=modality)
+        sources.append(
+            SequenceSource(name=sequence_dir.name, media_path=media_path, annotation_path=None, media_kind=media_kind)
+        )
+    return sources
 
 
 def build_output_stem(source_name: str, frame_stem: str) -> str:
@@ -373,6 +530,9 @@ def convert_labeled_frame_sequence(
     task: str,
     copy_images: bool,
 ) -> SequenceSummary:
+    if source.annotation_path is None:
+        raise FileNotFoundError(f"Frame sequence is missing annotation path: {source.media_path}")
+
     frame_files = list_frame_files(source.media_path)
     if not frame_files:
         return SequenceSummary(source.name, 0, 0, 0, "no_frames")
@@ -382,7 +542,7 @@ def convert_labeled_frame_sequence(
         raise ValueError(f"Failed to read first frame in {source.media_path}")
     image_h, image_w = image.shape[:2]
 
-    frame_boxes, annotation_mode = load_sequence_annotations(source.media_path, task=task)
+    frame_boxes, annotation_mode = load_annotations_for_source(source, task=task)
     labeled_count = 0
     object_count = 0
 
@@ -536,17 +696,29 @@ def main() -> None:
     args = parse_args()
     raw_train_dir = Path(args.raw_train_dir)
     output_root = Path(args.output_root)
+    split_manifest_path = (
+        Path(args.split_manifest) if args.split_manifest else default_split_manifest_path(raw_train_dir, seed=args.seed)
+    )
 
     if not raw_train_dir.exists():
         raise FileNotFoundError(f"Raw Anti-UAV train directory not found: {raw_train_dir}")
 
     reset_split_dirs(output_root=output_root, clear_output=args.clear_output)
-    train_sources = list_train_sources(raw_train_dir)
-    train_sequences, val_sequences = split_sequences(train_sources, val_ratio=args.val_ratio, seed=args.seed)
+    train_sources = list_train_sources(raw_train_dir, modality=args.modality)
+    train_sequences, val_sequences, manifest_status = split_sequences_with_manifest(
+        train_sources,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+        manifest_path=split_manifest_path,
+        raw_train_dir=raw_train_dir,
+        modality=args.modality,
+    )
 
     print(f"Raw train dir: {raw_train_dir.resolve()}")
     print(f"YOLO output root: {output_root.resolve()}")
+    print(f"Modality: {args.modality}")
     print(f"Task mode: {args.task}")
+    print(f"Split manifest: {split_manifest_path.resolve()} ({manifest_status})")
     print(f"Train sequences: {len(train_sequences)}")
     print(f"Val sequences: {len(val_sequences)}")
 
@@ -572,7 +744,7 @@ def main() -> None:
         raw_test_dir = Path(args.raw_test_dir)
         if not raw_test_dir.exists():
             raise FileNotFoundError(f"Raw Anti-UAV test directory not found: {raw_test_dir}")
-        test_sequence_dirs = list_test_sources(raw_test_dir)
+        test_sequence_dirs = list_test_sources(raw_test_dir, modality=args.modality)
         test_frames = sum(convert_test_source(seq, output_root, args.copy_images) for seq in test_sequence_dirs)
         print(f"test frames: {test_frames}")
         print(f"test sequences: {len(test_sequence_dirs)}")

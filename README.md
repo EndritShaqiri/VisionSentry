@@ -1,6 +1,6 @@
-# VisionSentry: Thermal UAV Detection + Tracking Baseline
+# VisionSentry: Thermal + RGB UAV Detection + Tracking Baseline
 
-Clean, modular, production-ready baseline for **thermal/infrared UAV detection and tracking** using:
+Clean, modular, production-ready baseline for **thermal/infrared and RGB UAV detection and tracking** using:
 - **YOLOv12-style detector workflow** (Ultralytics API)
 - **BoT-SORT tracker**
 - Optional **ReID toggle** (off by default)
@@ -17,11 +17,22 @@ The runtime pipeline is intentionally general-purpose and not tied to any compet
 ```text
 project_root/
   configs/
+    dataset_rgb_uav.yaml
     dataset_thermal_uav.yaml
     tracker_botsort.yaml
     train_detector.yaml
+    train_detector_rgb.yaml
   data/
     README.md
+    rgb_uav/
+      images/
+        train/
+        val/
+        test/
+      labels/
+        train/
+        val/
+        test/
     thermal_uav/
       images/
         train/
@@ -56,6 +67,15 @@ Expected dataset layout:
 
 ```text
 data/
+  rgb_uav/
+    images/
+      train/
+      val/
+      test/
+    labels/
+      train/
+      val/
+      test/
   thermal_uav/
     images/
       train/
@@ -77,6 +97,7 @@ Coordinates are normalized `[0, 1]`.
 
 ### Dataset Config
 Edit:
+- `configs/dataset_rgb_uav.yaml`
 - `configs/dataset_thermal_uav.yaml`
 
 Default:
@@ -90,10 +111,22 @@ names:
   0: uav
 ```
 
+RGB default:
+
+```yaml
+path: ./data/rgb_uav
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: uav
+```
+
 ### Verify Dataset Before Training
 
 ```bash
 python -m src.utils.dataset_checks --data configs/dataset_thermal_uav.yaml
+python -m src.utils.dataset_checks --data configs/dataset_rgb_uav.yaml
 ```
 
 Strict mode (non-zero exit if issues are found):
@@ -110,18 +143,33 @@ Checks include:
 
 ### Convert Anti-UAV Raw Data
 
-If you extracted the official release into `data/raw/train`, convert it into the YOLO layout with:
+If you extracted the official release into `data/raw/train`, convert the infrared split into the YOLO layout with:
 
 ```bash
 python -m src.utils.prepare_anti_uav \
   --raw-train-dir data/raw/train \
   --output-root data/thermal_uav \
+  --modality ir \
+  --val-ratio 0.2 \
+  --clear-output
+```
+
+To build the RGB dataset from the same raw Anti-UAV release and keep the exact same train/val partition, reuse a shared split manifest:
+
+```bash
+python -m src.utils.prepare_anti_uav \
+  --raw-train-dir data/raw/train \
+  --output-root data/rgb_uav \
+  --modality rgb \
+  --split-manifest data/raw/train_split_seed42.json \
   --val-ratio 0.2 \
   --clear-output
 ```
 
 Notes:
 - The converter splits by sequence, not by frame, to avoid train/val leakage.
+- The converter now supports `--modality ir|rgb` for frame-based Anti-UAV layouts.
+- Reuse the same `--split-manifest` across infrared and RGB conversions to keep metrics comparable.
 - It auto-detects common Anti-UAV annotation layouts for **single-target** and **multi-target** training data.
 - It also auto-detects the 4th Anti-UAV Track 3 layout with `TrainVideos/` plus `TrainLabels/` and decodes videos directly into frame-level YOLO samples.
 - Official `track2_test` or `track3_test` can remain under `data/raw/...` and be used later as an inference source.
@@ -132,6 +180,7 @@ If you have **Track 1/2 raw frame folders** plus **Track 3 raw videos**, build t
 python -m src.utils.prepare_anti_uav \
   --raw-train-dir data/raw_track1_2/train \
   --output-root data/thermal_uav \
+  --modality ir \
   --val-ratio 0.2 \
   --clear-output
 
@@ -139,6 +188,7 @@ python -m src.utils.prepare_anti_uav \
   --raw-train-dir data/raw_track3/MultiUAV_Train \
   --output-root data/thermal_uav \
   --task multi \
+  --modality ir \
   --val-ratio 0.2
 ```
 
@@ -149,6 +199,7 @@ python -m src.utils.prepare_anti_uav_track3 \
   --raw-train-dir data/raw_track3/MultiUAV_Train \
   --output-root data/thermal_uav \
   --task multi \
+  --modality ir \
   --val-ratio 0.2
 ```
 
@@ -159,6 +210,7 @@ python -m src.utils.prepare_anti_uav \
   --raw-train-dir data/raw/train \
   --raw-test-dir data/raw/track2_test \
   --output-root data/thermal_uav \
+  --modality ir \
   --val-ratio 0.2 \
   --clear-output
 ```
@@ -181,6 +233,7 @@ pip install -r requirements.txt
 
 ```bash
 python -m src.detection.train --config configs/train_detector.yaml
+python -m src.detection.train --config configs/train_detector_rgb.yaml
 ```
 
 The same training entry point is now callable directly from notebooks:
@@ -196,6 +249,12 @@ cfg.update({"device": "auto", "epochs": 1, "imgsz": 640, "batch": 8})
 save_dir = run_training(cfg, project_root=project_root)
 ```
 
+The training entry point now also forwards the notebook-level Ultralytics options used in practice:
+- `amp`
+- `verbose`
+- `seed`
+- `deterministic`
+
 ### Option B: CLI overrides
 
 ```bash
@@ -209,6 +268,23 @@ python -m src.detection.train \
   --workers 8 \
   --project runs/detect \
   --name yolo12n_thermal_uav
+```
+
+RGB parity run:
+
+```bash
+python -m src.detection.train \
+  --model yolo12n.pt \
+  --data configs/dataset_rgb_uav.yaml \
+  --imgsz 960 \
+  --batch 16 \
+  --epochs 100 \
+  --device 0 \
+  --workers 8 \
+  --project runs/detect \
+  --name yolo12n_rgb_uav \
+  --amp true \
+  --verbose true
 ```
 
 Best checkpoint is saved to:
@@ -258,6 +334,9 @@ Outputs:
 - optional annotated frames (`frames/`)
 - optional `detections.csv`
 
+For RGB inference, swap in the RGB checkpoint path, for example:
+- `runs/detect/yolo12n_rgb_uav/weights/best.pt`
+
 ## 7) BoT-SORT Tracking Inference
 
 ```bash
@@ -284,6 +363,7 @@ Outputs:
 The same tracker entry point works for:
 - single-UAV sequences
 - multi-UAV sequences with multiple detections per frame
+- RGB checkpoints as well as thermal checkpoints
 
 ## 8) ReID Toggle
 
@@ -294,6 +374,8 @@ The default tracker config is tuned for thermal UAV footage:
 - lower thresholds to reduce track resets
 - larger `track_buffer` to survive short detection misses
 - `gmc_method: None` to avoid unstable sparse optical flow on low-texture thermal scenes
+
+RGB checkpoints work with the same tracker entry point, but phase 1 keeps tracker tuning unchanged. Treat RGB tracking output as compatible qualitative inference until you decide to tune a separate RGB tracker config.
 
 Enable from CLI without editing config:
 
@@ -315,12 +397,14 @@ Use the provided notebooks:
 
 Typical flow in Colab:
 1. Open repo in Colab runtime.
-2. Install dependencies.
-3. Upload/mount dataset into `data/thermal_uav/`.
-4. Run dataset check.
-5. Train detector.
-6. Validate detector.
-7. Run detection + tracking and export MOT results.
+2. Set `MODALITY` to `ir` or `rgb`.
+3. Optionally let the notebook download the public Anti-UAV-RGBT archive for RGB experiments.
+4. Convert raw Anti-UAV data into `data/thermal_uav/` or `data/rgb_uav/`.
+5. Run dataset checks.
+6. Run a smoke test.
+7. Switch to parity settings and rerun training.
+8. Validate detector and compare metrics against the checked-in thermal baseline.
+9. Run detection + tracking and export MOT results.
 
 On SCC Jupyter:
 1. Start the notebook from the same conda environment you prepared for training.
@@ -339,12 +423,27 @@ python -m src.utils.dataset_checks --data configs/dataset_thermal_uav.yaml
 python -m src.detection.train --config configs/train_detector.yaml
 ```
 
+For RGB:
+
+```bash
+python -m src.utils.prepare_anti_uav \
+  --raw-train-dir data/raw/train \
+  --output-root data/rgb_uav \
+  --modality rgb \
+  --split-manifest data/raw/train_split_seed42.json
+python -m src.utils.dataset_checks --data configs/dataset_rgb_uav.yaml
+python -m src.detection.train --config configs/train_detector_rgb.yaml
+```
+
 ## 11) Which File To Edit First For Your Dataset
 
 Edit this first:
+- `configs/dataset_rgb_uav.yaml`
 - `configs/dataset_thermal_uav.yaml`
 
 Then place your images/labels under:
+- `data/rgb_uav/images/*`
+- `data/rgb_uav/labels/*`
 - `data/thermal_uav/images/*`
 - `data/thermal_uav/labels/*`
 
@@ -361,8 +460,8 @@ For inference/tracking, pass that path to:
 This codebase is structured to extend without breaking current workflows:
 
 1. RGB + Thermal fusion:
-   - add a new loader/module under `src/detection/` for dual-stream input
-   - add a fusion model config and fusion training entry point
+   - keep the new modality-aware dataset preparation path
+   - add a dual-stream model only after detector parity is established
 2. Higher resolutions:
    - update `imgsz` in config/CLI and tune batch size
 3. Thermal enhancement:

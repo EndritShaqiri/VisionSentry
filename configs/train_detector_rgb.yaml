@@ -1,0 +1,15 @@
+model: yolo12n.pt
+data: configs/dataset_rgb_uav.yaml
+imgsz: 960
+batch: 16
+epochs: 100
+device: 0
+workers: 8
+project: runs/detect
+name: yolo12n_rgb_uav
+pretrained: true
+optimizer: auto
+lr0: 0.01
+patience: 30
+cache: false
+exist_ok: false
