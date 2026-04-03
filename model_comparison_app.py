@@ -43,6 +43,14 @@ class ModelComparison:
     
     def process_video(self, video_path, progress=gr.Progress()):
         """Process video with both models"""
+        # Check file size (100MB limit)
+        import os
+        if video_path and os.path.exists(video_path):
+            file_size = os.path.getsize(video_path)
+            max_size = 100 * 1024 * 1024  # 100MB in bytes
+            if file_size > max_size:
+                raise ValueError(f"Video file is too large ({file_size / 1024 / 1024:.1f}MB). Maximum allowed size is 100MB.")
+        
         cap = cv2.VideoCapture(video_path)
         
         # Get video properties
@@ -185,11 +193,13 @@ def create_interface(model1_path, model2_path):
             ### 📹 Synchronized Video Playback
             Videos will play in sync. Use the controls on either video to control both.
             
+            **File Size Limit**: Maximum 100MB per video
+            
             **Note**: Processed videos are temporary and will be deleted when you close the browser or refresh the page.
             """)
             
             with gr.Row():
-                video_input = gr.Video(label="Upload Video")
+                video_input = gr.Video(label="Upload Video (Max 100MB)")
             
             with gr.Row():
                 video_btn = gr.Button("Run Detection", variant="primary")
