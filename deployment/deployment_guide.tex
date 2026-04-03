@@ -1,0 +1,410 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in,headheight=14pt]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{amssymb}
+
+% Code listing style
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{red},
+    showstringspaces=false
+}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Drone Detection Model Comparison}
+\lhead{Deployment Guide}
+\rfoot{Page \thepage}
+
+\title{\textbf{Drone Detection Model Comparison App\\Deployment Guide}}
+\author{VisionSentry Project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This guide provides step-by-step instructions for deploying the Drone Detection Model Comparison web application. The application uses YOLOv11/12 models for drone detection and provides a web interface for comparing two models side-by-side.
+
+\subsection{Key Features}
+\begin{itemize}
+    \item Side-by-side model comparison
+    \item Synchronized video playback
+    \item Real-time detection visualization
+    \item Detection statistics and graphs
+    \item CPU-optimized for cloud deployment
+\end{itemize}
+
+\subsection{System Requirements}
+\begin{itemize}
+    \item Python 3.11+
+    \item 2GB+ RAM (4GB recommended)
+    \item CPU-only (no GPU required)
+    \item Docker (for containerized deployment)
+\end{itemize}
+
+\section{Deployment Options}
+
+\subsection{Why Not Vercel?}
+
+\begin{tcolorbox}[colback=red!5!white,colframe=red!75!black,title=Important Note]
+\textbf{Vercel does not support Python applications.} Vercel is designed for JavaScript/Node.js frameworks (Next.js, React, etc.) and static sites only. For Python ML applications, use the alternatives below.
+\end{tcolorbox}
+
+\subsection{Recommended Platforms}
+
+\begin{enumerate}
+    \item \textbf{Hugging Face Spaces} - Free, ML-optimized, easiest deployment
+    \item \textbf{Railway.app} - Simple, free tier available
+    \item \textbf{Render.com} - Free tier, Docker support
+    \item \textbf{Google Cloud Run} - Pay-per-use, scalable
+    \item \textbf{AWS EC2} - Full control, requires more setup
+\end{enumerate}
+
+\section{Option 1: Hugging Face Spaces (Recommended)}
+
+\subsection{Why Hugging Face Spaces?}
+\begin{itemize}
+    \item \textbf{Free tier} with generous resources
+    \item Optimized for ML applications
+    \item Built-in Gradio support
+    \item No credit card required
+    \item Automatic HTTPS
+\end{itemize}
+
+\subsection{Deployment Steps}
+
+\subsubsection{Step 1: Create Account}
+\begin{enumerate}
+    \item Go to \url{https://huggingface.co}
+    \item Sign up for a free account
+    \item Verify your email
+\end{enumerate}
+
+\subsubsection{Step 2: Create New Space}
+\begin{enumerate}
+    \item Click on your profile → ``Spaces''
+    \item Click ``Create new Space''
+    \item Configure:
+    \begin{itemize}
+        \item Space name: \texttt{drone-detection-comparison}
+        \item License: MIT or Apache 2.0
+        \item SDK: \textbf{Gradio}
+        \item Hardware: CPU basic (free)
+    \end{itemize}
+    \item Click ``Create Space''
+\end{enumerate}
+
+\subsubsection{Step 3: Upload Files}
+Upload the following files to your Space:
+\begin{lstlisting}[language=bash]
+model_comparison_app.py
+requirements_app.txt
+weights/best.pt
+VisionSentry-dex-rgb-model-replication/weights/best.pt
+README.md
+\end{lstlisting}
+
+\subsubsection{Step 4: Configure App File}
+Rename \texttt{model\_comparison\_app.py} to \texttt{app.py} (Hugging Face convention):
+\begin{lstlisting}[language=bash]
+mv model_comparison_app.py app.py
+\end{lstlisting}
+
+\subsubsection{Step 5: Deploy}
+\begin{enumerate}
+    \item Commit files to the Space repository
+    \item Hugging Face will automatically build and deploy
+    \item Wait 2-5 minutes for deployment
+    \item Access your app at: \texttt{https://huggingface.co/spaces/YOUR\_USERNAME/drone-detection-comparison}
+\end{enumerate}
+
+\section{Option 2: Railway.app}
+
+\subsection{Deployment Steps}
+
+\subsubsection{Step 1: Setup}
+\begin{enumerate}
+    \item Go to \url{https://railway.app}
+    \item Sign up with GitHub
+    \item Click ``New Project'' → ``Deploy from GitHub repo''
+\end{enumerate}
+
+\subsubsection{Step 2: Configure}
+\begin{enumerate}
+    \item Select your repository
+    \item Railway will detect the Dockerfile
+    \item Set environment variables (if needed)
+    \item Click ``Deploy''
+\end{enumerate}
+
+\subsubsection{Step 3: Access}
+\begin{enumerate}
+    \item Wait for build to complete (5-10 minutes)
+    \item Railway will provide a public URL
+    \item Access your app at the provided URL
+\end{enumerate}
+
+\section{Option 3: Render.com}
+
+\subsection{Deployment Steps}
+
+\subsubsection{Step 1: Create Account}
+\begin{enumerate}
+    \item Go to \url{https://render.com}
+    \item Sign up with GitHub
+\end{enumerate}
+
+\subsubsection{Step 2: Create Web Service}
+\begin{enumerate}
+    \item Click ``New +'' → ``Web Service''
+    \item Connect your GitHub repository
+    \item Configure:
+    \begin{itemize}
+        \item Name: \texttt{drone-detection}
+        \item Environment: Docker
+        \item Plan: Free
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Step 3: Deploy}
+\begin{enumerate}
+    \item Render will use the \texttt{render.yaml} configuration
+    \item Click ``Create Web Service''
+    \item Wait for deployment (10-15 minutes first time)
+\end{enumerate}
+
+\section{Local Deployment}
+
+\subsection{Using Docker}
+
+\subsubsection{Build Image}
+\begin{lstlisting}[language=bash]
+cd VisionSentry
+docker build -t drone-detection-app .
+\end{lstlisting}
+
+\subsubsection{Run Container}
+\begin{lstlisting}[language=bash]
+docker run -p 7860:7860 drone-detection-app
+\end{lstlisting}
+
+\subsubsection{Access}
+Open browser to: \texttt{http://localhost:7860}
+
+\subsection{Using Python Directly}
+
+\subsubsection{Install Dependencies}
+\begin{lstlisting}[language=bash]
+pip install -r requirements_app.txt
+\end{lstlisting}
+
+\subsubsection{Run Application}
+\begin{lstlisting}[language=bash]
+python model_comparison_app.py
+\end{lstlisting}
+
+\subsubsection{Access}
+Open browser to: \texttt{http://localhost:7860}
+
+\section{Configuration}
+
+\subsection{CPU vs GPU}
+
+The application is configured to use \textbf{CPU by default} for deployment compatibility:
+
+\begin{lstlisting}[language=Python]
+# CPU inference (default)
+results = model(image, device='cpu')
+\end{lstlisting}
+
+To enable GPU locally (if available):
+\begin{lstlisting}[language=Python]
+# GPU inference
+results = model(image, device='cuda')
+\end{lstlisting}
+
+\subsection{Model Paths}
+
+Update model paths in \texttt{model\_comparison\_app.py}:
+\begin{lstlisting}[language=Python]
+model1_path = "weights/best.pt"
+model2_path = "VisionSentry-dex-rgb-model-replication/weights/best.pt"
+\end{lstlisting}
+
+\subsection{Port Configuration}
+
+Default port is 7860. To change:
+\begin{lstlisting}[language=Python]
+demo.launch(server_port=8080)
+\end{lstlisting}
+
+\section{Troubleshooting}
+
+\subsection{Common Issues}
+
+\subsubsection{Out of Memory}
+\begin{tcolorbox}[colback=yellow!5!white,colframe=yellow!75!black]
+\textbf{Solution:} Reduce video resolution or process fewer frames at once.
+\end{tcolorbox}
+
+\subsubsection{Slow Inference}
+\begin{tcolorbox}[colback=yellow!5!white,colframe=yellow!75!black]
+\textbf{Solution:} CPU inference is slower. Consider upgrading to a paid tier with GPU support on Hugging Face Spaces.
+\end{tcolorbox}
+
+\subsubsection{Model Not Found}
+\begin{tcolorbox}[colback=yellow!5!white,colframe=yellow!75!black]
+\textbf{Solution:} Ensure model weights are uploaded and paths are correct.
+\end{tcolorbox}
+
+\subsection{Platform-Specific Issues}
+
+\subsubsection{Hugging Face Spaces}
+\begin{itemize}
+    \item \textbf{Build fails:} Check \texttt{requirements\_app.txt} for incompatible versions
+    \item \textbf{App crashes:} Check logs in Space settings
+    \item \textbf{Slow loading:} Upgrade to better hardware tier
+\end{itemize}
+
+\subsubsection{Railway/Render}
+\begin{itemize}
+    \item \textbf{Deployment timeout:} Large model files may cause timeout. Use Git LFS
+    \item \textbf{Port binding:} Ensure app binds to \texttt{0.0.0.0}, not \texttt{localhost}
+\end{itemize}
+
+\section{Performance Optimization}
+
+\subsection{Reduce Model Size}
+\begin{itemize}
+    \item Use smaller YOLO models (YOLOv11n instead of YOLOv11x)
+    \item Quantize models for faster inference
+    \item Use ONNX format for optimized inference
+\end{itemize}
+
+\subsection{Video Processing}
+\begin{itemize}
+    \item Limit video length (e.g., max 30 seconds)
+    \item Reduce frame rate (process every Nth frame)
+    \item Lower output resolution
+\end{itemize}
+
+\subsection{Caching}
+\begin{itemize}
+    \item Cache model loading
+    \item Use Gradio's built-in caching
+    \item Implement result caching for repeated inputs
+\end{itemize}
+
+\section{Security Considerations}
+
+\subsection{Best Practices}
+\begin{enumerate}
+    \item \textbf{Input validation:} Limit file sizes and formats
+    \item \textbf{Rate limiting:} Prevent abuse with request limits
+    \item \textbf{HTTPS:} All platforms provide automatic HTTPS
+    \item \textbf{Environment variables:} Store sensitive data securely
+\end{enumerate}
+
+\subsection{File Upload Limits}
+\begin{lstlisting}[language=Python]
+# Limit video size to 100MB
+video_input = gr.Video(label="Upload Video", 
+                       file_count="single",
+                       max_size=100*1024*1024)
+\end{lstlisting}
+
+\section{Monitoring and Maintenance}
+
+\subsection{Logging}
+Enable logging for debugging:
+\begin{lstlisting}[language=Python]
+import logging
+logging.basicConfig(level=logging.INFO)
+\end{lstlisting}
+
+\subsection{Usage Analytics}
+\begin{itemize}
+    \item Hugging Face Spaces provides built-in analytics
+    \item Railway/Render offer usage dashboards
+    \item Monitor CPU/memory usage
+\end{itemize}
+
+\subsection{Updates}
+\begin{enumerate}
+    \item Test changes locally first
+    \item Use version control (Git)
+    \item Deploy to staging before production
+    \item Monitor after deployment
+\end{enumerate}
+
+\section{Cost Estimation}
+
+\subsection{Free Tiers}
+\begin{itemize}
+    \item \textbf{Hugging Face Spaces:} Free CPU tier (2 vCPU, 16GB RAM)
+    \item \textbf{Railway:} \$5 free credit/month
+    \item \textbf{Render:} 750 hours/month free
+\end{itemize}
+
+\subsection{Paid Tiers (if needed)}
+\begin{itemize}
+    \item \textbf{Hugging Face GPU:} \$0.60/hour (T4 GPU)
+    \item \textbf{Railway:} \$0.000231/GB-second
+    \item \textbf{Render:} \$7/month (starter)
+\end{itemize}
+
+\section{Quick Start Checklist}
+
+\begin{enumerate}
+    \item[$\square$] Choose deployment platform (Hugging Face recommended)
+    \item[$\square$] Create account on chosen platform
+    \item[$\square$] Prepare files: \texttt{app.py}, \texttt{requirements\_app.txt}, model weights
+    \item[$\square$] Upload files to platform
+    \item[$\square$] Configure settings (CPU, port, etc.)
+    \item[$\square$] Deploy and wait for build
+    \item[$\square$] Test application with sample video
+    \item[$\square$] Share public URL
+\end{enumerate}
+
+\section{Support and Resources}
+
+\subsection{Documentation}
+\begin{itemize}
+    \item Gradio: \url{https://gradio.app/docs}
+    \item Hugging Face Spaces: \url{https://huggingface.co/docs/hub/spaces}
+    \item Ultralytics YOLO: \url{https://docs.ultralytics.com}
+\end{itemize}
+
+\subsection{Community}
+\begin{itemize}
+    \item Gradio Discord: \url{https://discord.gg/gradio}
+    \item Hugging Face Forums: \url{https://discuss.huggingface.co}
+\end{itemize}
+
+\section{Conclusion}
+
+This guide covered multiple deployment options for the Drone Detection Model Comparison app. For most users, \textbf{Hugging Face Spaces} is the recommended platform due to its ease of use, ML optimization, and generous free tier.
+
+For production deployments with high traffic, consider upgrading to paid tiers or using cloud platforms like Google Cloud Run or AWS with auto-scaling capabilities.
+
+\vspace{1cm}
+\noindent\textbf{Happy Deploying!}
+
+\end{document}
