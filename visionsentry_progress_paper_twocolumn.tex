@@ -1,0 +1,215 @@
+\documentclass[10pt,conference]{IEEEtran}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\title{VisionSentry: A Progress Report on Thermal and RGB UAV Detection, Tracking, and Multimodal Fusion}
+
+\author{
+\IEEEauthorblockN{Author Name(s)}
+\IEEEauthorblockA{VisionSentry Project}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper summarizes the current state of the VisionSentry repository, which is being developed as a practical framework for unmanned aerial vehicle (UAV) detection and tracking under challenging sensing conditions. The implemented core of the repository is a thermal/infrared (IR) baseline built around an Ultralytics YOLO detector and a BoT-SORT tracker, together with scripts for dataset conversion, validation, detector-only inference, and tracking with MOT-format export. The repository currently supports Anti-UAV style frame-folder annotations as well as Track 3 style video-plus-label training assets, and it exposes both command-line and notebook-based workflows for reproducible experimentation. A prepared thermal dataset in YOLO format currently contains 318,932 training images and 80,478 validation images, with 307,121 training frames and 74,427 validation frames containing at least one labeled target. A preliminary smoke-test training run achieved a validation precision of 0.9057, recall of 0.8924, mAP@0.50 of 0.9191, and mAP@0.50:0.95 of 0.4940 after two epochs at 640-pixel resolution. In parallel with this thermal branch, an RGB-only detector/tracker has been trained with the same overall pipeline on a different dataset. The current multimodal goal is to fuse the IR-only and RGB-only predictions using weighted box fusion (WBF), and the next planned extension is distance estimation for the detected drone. This document is written as a progress report: it describes the completed system, the available experimental artifacts, and the near-term multimodal roadmap.
+\end{abstract}
+
+\section{Introduction}
+Detecting and tracking small airborne targets is difficult because UAVs often occupy only a small portion of the image, move quickly, and appear in visually cluttered backgrounds. In low-visibility or night-time conditions, thermal imagery can remain informative when RGB imagery degrades, while RGB imagery can provide stronger spatial detail under favorable lighting. For that reason, VisionSentry is being developed as a modular platform that can support both single-modality baselines and multimodal fusion.
+
+The current repository is centered on a thermal UAV baseline. However, the broader project now includes two modality-specific branches: an IR-only detector/tracker and an RGB-only detector/tracker trained with the same overall workflow but on different datasets. The immediate research direction is to combine these branches through weighted box fusion, and the next extension after fusion is monocular distance estimation for the drone.
+
+\section{Project Scope and Contributions}
+At its current stage, the repository makes the following contributions:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item A modular thermal UAV detection pipeline under \texttt{src/detection/} with training, validation, and detector-only inference entry points.
+    \item A BoT-SORT based tracking pipeline under \texttt{src/tracking/} with optional ReID control and MOT-format trajectory export.
+    \item A dataset conversion utility that converts heterogeneous Anti-UAV style raw assets into a unified YOLO layout, including single-target frame folders, multi-target frame folders, and Track 3 style video-and-label data.
+    \item Notebook and command-line workflows for reproducible experimentation in local, Colab, or Jupyter-based environments.
+    \item A repository structure that is already suitable for extending from a thermal-only baseline toward IR+RGB fusion and future range estimation.
+\end{itemize}
+
+\section{Repository and System Overview}
+The repository is organized around four main components:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Configuration}: \texttt{configs/} stores detector, dataset, and tracker settings.
+    \item \textbf{Data preparation}: \texttt{src/utils/prepare\_anti\_uav.py} converts raw data into the YOLO image/label directory structure.
+    \item \textbf{Detection}: \texttt{src/detection/train.py}, \texttt{validate.py}, and \texttt{infer.py} implement training, evaluation, and detector-only prediction.
+    \item \textbf{Tracking}: \texttt{src/tracking/run\_tracker.py} performs online tracking using BoT-SORT and writes trajectories in MOT format.
+\end{itemize}
+
+The implemented runtime path is therefore:
+\[
+\text{raw UAV data} \rightarrow \text{YOLO conversion} \rightarrow \text{detector training} \rightarrow \text{validation} \rightarrow \text{tracking and export}
+\]
+
+\begin{figure*}[t]
+\centering
+\fbox{\parbox{0.92\textwidth}{
+\centering
+Suggested figure placeholder. Replace with a project overview showing:
+raw IR data and raw RGB data, per-modality detector branches, weighted box fusion, tracking, and the future distance-estimation stage.
+}}
+\caption{High-level VisionSentry roadmap from single-modality detection to multimodal fusion and future distance estimation.}
+\label{fig:pipeline}
+\end{figure*}
+
+\section{Dataset Preparation}
+\subsection{Supported Raw Formats}
+The repository already handles multiple annotation layouts through a single conversion tool. In particular, the conversion code supports:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item frame-directory sequences with \texttt{IR\_label.json} annotations,
+    \item generic multi-target JSON annotations,
+    \item MOT-style text annotations,
+    \item Track 3 style \texttt{TrainVideos/} plus \texttt{TrainLabels/} training assets.
+\end{itemize}
+
+This design is important because it allows the same downstream detector and tracker code to operate on differently structured raw datasets after conversion to a common YOLO representation.
+
+\subsection{Leakage-Aware Conversion}
+The conversion script splits data by \emph{sequence} rather than by individual frame. This is a meaningful design choice because adjacent frames from the same video are strongly correlated, and frame-level splitting would create train/validation leakage. During conversion, each frame is written to a YOLO-compatible image path and a matching text label is generated in normalized center-width-height format.
+
+\subsection{Current Prepared Thermal Dataset}
+The prepared thermal dataset under \texttt{data/thermal\_uav/} currently contains the statistics in Table~\ref{tab:dataset}.
+
+\begin{table}[t]
+\centering
+\caption{Current thermal dataset snapshot prepared in YOLO format.}
+\label{tab:dataset}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Statistic} & \textbf{Train} & \textbf{Validation} \\
+\midrule
+Images & 318,932 & 80,478 \\
+Label files & 318,932 & 80,478 \\
+Frames with non-empty labels & 307,121 & 74,427 \\
+Frames with empty labels & 11,811 & 6,051 \\
+Unique converted sequences & 189 & 50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The repository also contains raw thermal assets for Anti-UAV style experimentation, including frame-folder data and Track 3 video/label pairs. At the time of this report, the prepared \texttt{test} split is still empty, so the current focus remains on training and validation rather than final held-out testing.
+
+\section{Detection Pipeline}
+\subsection{Implemented Detector Workflow}
+The thermal branch uses an Ultralytics YOLO detector through a clean wrapper in \texttt{src/detection/train.py}. The default detector configuration in \texttt{configs/train\_detector.yaml} specifies:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item model initialization from \texttt{yolo12n.pt},
+    \item input size of 960 pixels,
+    \item batch size of 16,
+    \item 100 epochs,
+    \item pretrained initialization,
+    \item automatic optimizer selection,
+    \item early stopping patience of 30 epochs.
+\end{itemize}
+
+The detector wrapper resolves project-relative paths, supports configuration-file overrides, and prints the fully resolved training configuration before execution. Validation is implemented separately in \texttt{src/detection/validate.py}, which stores metrics in JSON format and supports standard train/validation/test split evaluation.
+
+\subsection{Notebook Support}
+The repository includes notebooks for interactive experimentation. The thermal training notebook calls the same Python functions used by the command-line interface, which helps maintain consistency between scripted runs and exploratory notebook-based work. This is important for a research workflow because it reduces divergence between prototype and production code.
+
+\section{Tracking Pipeline}
+Tracking is implemented through BoT-SORT in \texttt{src/tracking/run\_tracker.py}. The tracker wrapper:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item loads detector weights and a tracker YAML file,
+    \item runs online tracking on a video file or frame folder,
+    \item writes annotated videos and optional annotated frames,
+    \item exports per-track trajectories in MOT format as \texttt{frame,id,x,y,w,h,score,-1,-1,-1}.
+\end{itemize}
+
+The current repository configuration in \texttt{configs/tracker\_botsort.yaml} has already been tuned for thermal footage by lowering detection thresholds, increasing the track buffer, and disabling global motion compensation (\texttt{gmc\_method: None}), since sparse optical-flow style motion compensation can be unstable in low-texture thermal scenes. Re-identification is currently disabled by default but can be switched on through the command line.
+
+\section{Current Experimental Status}
+\subsection{Preliminary Thermal Detector Results}
+The repository contains a saved detector run named \texttt{yolo12n\_thermal\_uav\_speedtest3}. This run is best interpreted as a smoke test rather than a final benchmark, because it was executed for only two epochs at 640-pixel resolution with automatic batch sizing. Even so, it provides a useful sanity check that the end-to-end training and validation pipeline is working.
+
+Table~\ref{tab:detector-results} reports the final validation metrics recorded in the saved \texttt{results.csv} artifact for that run.
+
+\begin{table}[t]
+\centering
+\caption{Preliminary thermal detector metrics from the saved smoke-test run after epoch 2.}
+\label{tab:detector-results}
+\begin{tabular}{lr}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Precision & 0.9057 \\
+Recall & 0.8924 \\
+mAP@0.50 & 0.9191 \\
+mAP@0.50:0.95 & 0.4940 \\
+Epochs & 2 \\
+Input size & 640 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These values are promising, but they should not yet be treated as the final performance claim of the project. A full-resolution, longer-duration training schedule is still required for a fair thermal baseline.
+
+\subsection{Saved Inference and Tracking Artifacts}
+The repository also contains end-to-end output artifacts for qualitative inspection:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item a detector-only run with 1,035 saved frames and 1,066 detection rows in the exported CSV file, and
+    \item a tracking run over 1,035 saved frames with 629 MOT trajectory rows and 56 unique track identifiers.
+\end{itemize}
+
+These artifacts confirm that the codebase already supports practical deployment steps beyond training, including video annotation, frame export, and trajectory serialization. At the same time, the current repository does not yet include a standardized quantitative multi-object tracking benchmark, so the tracking branch should still be viewed as a functional baseline rather than a finished evaluation suite.
+
+\section{Parallel RGB Branch and Multimodal Direction}
+Although the repository is centered on the thermal branch, the broader project now also includes an RGB-only detector/tracker trained with the same overall pipeline on a separate RGB dataset. The repository additionally contains an earlier RGB-oriented notebook prototype that demonstrates detector training, tracking, and heatmap visualization on RGB imagery. This is useful evidence that the project is already operating in a cross-modality setting, even if the current modular \texttt{src/} pipeline remains thermal-first.
+
+The current multimodal objective is to fuse the IR-only and RGB-only branches using weighted box fusion. Conceptually, this means running the two detectors in parallel, aligning their per-frame predictions, and merging overlapping boxes into a single fused hypothesis whose location and confidence are informed by both modalities. This strategy is attractive because it allows the project to preserve strong single-modality baselines while adding cross-modal robustness without redesigning the detector from scratch.
+
+\section{Planned Fusion Strategy}
+The intended next-stage system can be summarized as follows:
+
+\begin{enumerate}[leftmargin=1.5em]
+    \item Train and maintain an IR-only detector/tracker branch.
+    \item Train and maintain an RGB-only detector/tracker branch with the same overall workflow but on an RGB dataset.
+    \item Synchronize predictions from the two modalities.
+    \item Apply weighted box fusion to combine overlapping detections.
+    \item Feed the fused detections into the tracking stage.
+\end{enumerate}
+
+This design keeps the project modular. It also enables several future comparisons: IR-only versus RGB-only versus fused detection, as well as tracker performance with single-modality or fused inputs. A careful implementation will need to address timestamp alignment, spatial calibration between modalities, and confidence-score normalization so that WBF does not unfairly over-trust one branch.
+
+\section{Future Work: Distance Estimation}
+The next major extension planned for the coming weeks is distance estimation for the drone. This would move VisionSentry from detection-and-tracking toward richer situational awareness. At minimum, the distance module should take the tracked drone observation and estimate range in a temporally stable way. Several implementation paths are compatible with the current codebase:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item monocular geometric estimation using camera parameters and bounding-box scale,
+    \item learned depth or range regression from image features,
+    \item track-level temporal smoothing for more stable distance output.
+\end{itemize}
+
+Because the repository already exports detections and trajectories in a structured format, a distance-estimation module can be integrated as a downstream stage without breaking the current detector or tracker interfaces.
+
+\section{Limitations at the Current Stage}
+The repository is already useful, but several limitations remain:
+
+\begin{itemize}[leftmargin=1.5em]
+    \item The implemented \texttt{src/} pipeline is thermal-first; RGB support is still partially external or notebook-driven.
+    \item The saved thermal result is a preliminary smoke test rather than the final optimized detector benchmark.
+    \item Quantitative tracking evaluation is not yet formalized.
+    \item Weighted box fusion is an active development target rather than a completed repository feature.
+    \item Distance estimation is planned but not yet implemented.
+\end{itemize}
+
+\section{Conclusion}
+VisionSentry has already progressed beyond a simple code prototype. The repository now provides a coherent thermal UAV workflow covering dataset conversion, training, validation, detector-only inference, BoT-SORT tracking, and MOT export. It also contains prepared thermal data at substantial scale and preliminary saved results that validate the end-to-end stack. The broader project has now expanded to include a matching RGB-only branch, making multimodal fusion the natural next step. Weighted box fusion is the immediate integration strategy, and distance estimation is the next planned capability after fusion. As a result, the project is well positioned to evolve from a thermal baseline into a multimodal UAV perception system with both tracking and range-awareness functionality.
+
+\end{document}
