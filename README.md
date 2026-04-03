@@ -1,58 +1,51 @@
-# VisionSentry: Thermal UAV Detection + Tracking Baseline
+# VisionSentry
 
-Clean, modular, production-ready baseline for **thermal/infrared UAV detection and tracking** using:
-- **YOLOv12-style detector workflow** (Ultralytics API)
-- **BoT-SORT tracker**
-- Optional **ReID toggle** (off by default)
-- **MOT-format export**: `frame,id,x,y,w,h,score,-1,-1,-1`
+Thermal UAV detection and tracking baseline built around:
+- Ultralytics YOLOv12 detector
+- BoT-SORT tracker
+- YOLO-format dataset conversion utilities
+- detector validation, inference, and MOT export
 
-This repository supports both:
-- **single-UAV experiments** such as Anti-UAV Track 2
-- **multi-UAV experiments** when the raw annotations provide multiple boxes per frame
+The repo currently has a solid **thermal/IR pipeline** under `src/`. Tracking is **inference-time tracking**, not a separately trained tracking model.
 
-The runtime pipeline is intentionally general-purpose and not tied to any competition-specific conventions.
+## What This Repo Does
 
-## 1) Project Structure
+- Converts Anti-UAV style raw data into YOLO format
+- Trains a thermal detector
+- Validates detector checkpoints
+- Runs detector-only inference on videos or frame folders
+- Runs BoT-SORT tracking and exports `tracks_mot.txt`
+
+## Project Layout
 
 ```text
-project_root/
-  configs/
-    dataset_thermal_uav.yaml
-    tracker_botsort.yaml
-    train_detector.yaml
-  data/
-    README.md
-    thermal_uav/
-      images/
-        train/
-        val/
-        test/
-      labels/
-        train/
-        val/
-        test/
-  notebooks/
-    train_detector.ipynb
-    infer_and_track.ipynb
-  runs/
-  src/
-    detection/
-      train.py
-      validate.py
-      infer.py
-    tracking/
-      run_tracker.py
-    utils/
-      dataset_checks.py
-      paths.py
-      visualization.py
-  requirements.txt
-  README.md
+configs/
+  dataset_thermal_uav.yaml
+  tracker_botsort.yaml
+  train_detector.yaml
+data/
+  thermal_uav/
+    images/{train,val,test}
+    labels/{train,val,test}
+notebooks/
+  train_detector.ipynb
+  infer_and_track.ipynb
+src/
+  detection/
+    train.py
+    validate.py
+    infer.py
+  tracking/
+    run_tracker.py
+  utils/
+    prepare_anti_uav.py
+    dataset_checks.py
+runs/
 ```
 
-## 2) Dataset Layout (YOLO)
+## Dataset Format
 
-Expected dataset layout:
+Expected YOLO layout:
 
 ```text
 data/
@@ -67,19 +60,13 @@ data/
       test/
 ```
 
-Label format (single class `uav`, one or more boxes per frame):
+Label format:
 
 ```text
 0 x_center y_center width height
 ```
 
-Coordinates are normalized `[0, 1]`.
-
-### Dataset Config
-Edit:
-- `configs/dataset_thermal_uav.yaml`
-
-Default:
+Default dataset config is in [configs/dataset_thermal_uav.yaml](C:/Users/Thinkbook 14/VisionSentry/configs/dataset_thermal_uav.yaml):
 
 ```yaml
 path: ./data/thermal_uav
@@ -90,43 +77,37 @@ names:
   0: uav
 ```
 
-### Verify Dataset Before Training
+## Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate    # Windows PowerShell
+
+pip install -r requirements.txt
+```
+
+Optional on SCC/Jupyter:
+
+```bash
+export PYTHONNOUSERSITE=1
+```
+
+## Prepare and Check Data
+
+Verify dataset structure before training:
 
 ```bash
 python -m src.utils.dataset_checks --data configs/dataset_thermal_uav.yaml
 ```
 
-Strict mode (non-zero exit if issues are found):
+Strict mode:
 
 ```bash
 python -m src.utils.dataset_checks --data configs/dataset_thermal_uav.yaml --strict
 ```
 
-Checks include:
-- image/label count consistency
-- malformed label lines
-- empty label files
-- class statistics
-
-### Convert Anti-UAV Raw Data
-
-If you extracted the official release into `data/raw/train`, convert it into the YOLO layout with:
-
-```bash
-python -m src.utils.prepare_anti_uav \
-  --raw-train-dir data/raw/train \
-  --output-root data/thermal_uav \
-  --val-ratio 0.2 \
-  --clear-output
-```
-
-Notes:
-- The converter splits by sequence, not by frame, to avoid train/val leakage.
-- It auto-detects common Anti-UAV annotation layouts for **single-target** and **multi-target** training data.
-- It also auto-detects the 4th Anti-UAV Track 3 layout with `TrainVideos/` plus `TrainLabels/` and decodes videos directly into frame-level YOLO samples.
-- Official `track2_test` or `track3_test` can remain under `data/raw/...` and be used later as an inference source.
-
-If you have **Track 1/2 raw frame folders** plus **Track 3 raw videos**, build the combined training set by running the converter twice into the same output root:
+Convert raw Anti-UAV data:
 
 ```bash
 python -m src.utils.prepare_anti_uav \
@@ -142,86 +123,50 @@ python -m src.utils.prepare_anti_uav \
   --val-ratio 0.2
 ```
 
-For Track 3, you can also call:
+Notes:
+- splitting is by sequence, not by frame
+- Track 1/2 frame folders and Track 3 video-plus-label data are both supported
 
-```bash
-python -m src.utils.prepare_anti_uav_track3 \
-  --raw-train-dir data/raw_track3/MultiUAV_Train \
-  --output-root data/thermal_uav \
-  --task multi \
-  --val-ratio 0.2
-```
+## Train Detector
 
-Prepare test images as well:
+### Notebook workflow
 
-```bash
-python -m src.utils.prepare_anti_uav \
-  --raw-train-dir data/raw/train \
-  --raw-test-dir data/raw/track2_test \
-  --output-root data/thermal_uav \
-  --val-ratio 0.2 \
-  --clear-output
-```
+Use [notebooks/train_detector.ipynb](C:/Users/Thinkbook 14/VisionSentry/notebooks/train_detector.ipynb).
 
-## 3) Installation
+Important:
+- the notebook trains the **detector only**
+- it calls the same `run_training(...)` function from [src/detection/train.py](C:/Users/Thinkbook 14/VisionSentry/src/detection/train.py)
+- it does **not** train twice
+- the notebook usually overrides the YAML config with a smaller smoke-test setup
 
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-# source .venv/bin/activate
+Typical notebook smoke-test overrides:
+- smaller image size
+- fewer epochs
+- auto batch sizing
+- more workers
+- disk cache
 
-pip install -r requirements.txt
-```
+### CLI workflow
 
-## 4) Train Detector (YOLOv12-style)
-
-### Option A: config-driven
+Config-driven:
 
 ```bash
 python -m src.detection.train --config configs/train_detector.yaml
 ```
 
-The same training entry point is now callable directly from notebooks:
+The default training config file is [configs/train_detector.yaml](C:/Users/Thinkbook 14/VisionSentry/configs/train_detector.yaml).
 
-```python
-from pathlib import Path
-from src.detection.train import load_yaml, run_training
-from src.utils.project import find_project_root
-
-project_root = find_project_root()
-cfg = load_yaml(project_root / "configs" / "train_detector.yaml")
-cfg.update({"device": "auto", "epochs": 1, "imgsz": 640, "batch": 8})
-save_dir = run_training(cfg, project_root=project_root)
-```
-
-### Option B: CLI overrides
-
-```bash
-python -m src.detection.train \
-  --model yolo12n.pt \
-  --data configs/dataset_thermal_uav.yaml \
-  --imgsz 960 \
-  --batch 16 \
-  --epochs 100 \
-  --device 0 \
-  --workers 8 \
-  --project runs/detect \
-  --name yolo12n_thermal_uav
-```
-
-Best checkpoint is saved to:
+After training, the best checkpoint is saved at:
 
 ```text
 runs/detect/<run_name>/weights/best.pt
 ```
 
-## 5) Validate Detector
+## Validate Detector
 
 ```bash
 python -m src.detection.validate \
-  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
+  --weights runs/detect/<run_name>/weights/best.pt \
   --data configs/dataset_thermal_uav.yaml \
   --split val \
   --imgsz 960 \
@@ -231,144 +176,111 @@ python -m src.detection.validate \
   --name thermal_uav_val
 ```
 
-Metrics are saved in:
-- `runs/val/<run_name>/metrics.json`
+Metrics are written to:
 
-## 6) Detector-Only Inference
+```text
+runs/val/<run_name>/metrics.json
+```
 
-Works on a video file or folder of frames:
+## Detector-Only Inference
+
+This runs the trained detector on a video or frame folder. It does **not** do tracking.
+
+Working example:
 
 ```bash
+export PYTHONNOUSERSITE=1
 python -m src.detection.infer \
-  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
-  --source data/sample.mp4 \
-  --imgsz 960 \
-  --conf 0.25 \
+  --weights runs/detect/yolo12n_thermal_uav_speedtest3/weights/best.pt \
+  --source /projectnb/cs585/students/endrit01/VisionSentry/1.mp4 \
+  --imgsz 640 \
+  --conf 0.10 \
   --iou 0.5 \
-  --device 0 \
+  --device cpu \
   --save_video true \
   --save_frames true \
   --save_txt true \
   --project runs/predict \
-  --name thermal_detect
+  --name test_1mp4_detect_cpu
 ```
 
 Outputs:
 - `detected.mp4`
-- optional annotated frames (`frames/`)
-- optional `detections.csv`
+- `frames/`
+- `detections.csv`
 
-## 7) BoT-SORT Tracking Inference
+## Tracking
+
+Tracking is run separately from detector training using BoT-SORT. In this repo, you do **not** train the tracker as a separate model. You train the detector, then run the tracker on top of detector predictions.
+
+Working example:
 
 ```bash
+export PYTHONNOUSERSITE=1
 python -m src.tracking.run_tracker \
-  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
-  --source data/sample.mp4 \
+  --weights runs/detect/yolo12n_thermal_uav_speedtest3/weights/best.pt \
+  --source /projectnb/cs585/students/endrit01/VisionSentry/1.mp4 \
   --tracker configs/tracker_botsort.yaml \
-  --conf 0.25 \
+  --imgsz 640 \
+  --conf 0.10 \
   --iou 0.5 \
-  --imgsz 960 \
-  --device 0 \
-  --project runs/track \
-  --name thermal_track \
+  --device cpu \
   --save_video true \
-  --save_frames true
+  --save_frames true \
+  --project runs/track \
+  --name test_1mp4_track_cpu
 ```
 
 Outputs:
-- tracked video: `tracked.mp4`
-- optional annotated frames: `frames/`
-- MOT file: `tracks_mot.txt` with rows:
-  `frame,id,x,y,w,h,score,-1,-1,-1`
+- `tracked.mp4`
+- `frames/`
+- `tracks_mot.txt`
+- `tracker_runtime.yaml`
 
-The same tracker entry point works for:
-- single-UAV sequences
-- multi-UAV sequences with multiple detections per frame
+MOT rows are written as:
 
-## 8) ReID Toggle
+```text
+frame,id,x,y,w,h,score,-1,-1,-1
+```
 
-Default is disabled in:
-- `configs/tracker_botsort.yaml` (`with_reid: false`)
+## ReID
 
-The default tracker config is tuned for thermal UAV footage:
-- lower thresholds to reduce track resets
-- larger `track_buffer` to survive short detection misses
-- `gmc_method: None` to avoid unstable sparse optical flow on low-texture thermal scenes
+Default tracker config is [configs/tracker_botsort.yaml](C:/Users/Thinkbook 14/VisionSentry/configs/tracker_botsort.yaml).
 
-Enable from CLI without editing config:
+Current defaults:
+- `with_reid: false`
+- `gmc_method: None`
+- `track_buffer: 60`
+- `match_thresh: 0.90`
+
+Enable ReID from CLI:
 
 ```bash
 python -m src.tracking.run_tracker \
-  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
-  --source data/sample.mp4 \
+  --weights runs/detect/<run_name>/weights/best.pt \
+  --source path/to/video.mp4 \
   --tracker configs/tracker_botsort.yaml \
   --with_reid true
 ```
 
-A runtime tracker config is written to the run folder for reproducibility.
+## Recommended Workflow
 
-## 9) Google Colab Workflow
+1. Prepare raw data into `data/thermal_uav/`
+2. Run dataset checks
+3. Train detector
+4. Validate detector
+5. Run detector-only inference
+6. Run tracking
 
-Use the provided notebooks:
-- `notebooks/train_detector.ipynb`
-- `notebooks/infer_and_track.ipynb`
+## Current Status
 
-Typical flow in Colab:
-1. Open repo in Colab runtime.
-2. Install dependencies.
-3. Upload/mount dataset into `data/thermal_uav/`.
-4. Run dataset check.
-5. Train detector.
-6. Validate detector.
-7. Run detection + tracking and export MOT results.
+- thermal detector/tracker pipeline is implemented under `src/`
+- notebook workflow is supported
+- tracking is working, but stable IDs depend heavily on detector quality
+- the current saved `speedtest` weights were trained for only a short smoke test and are not final-quality weights
 
-On SCC Jupyter:
-1. Start the notebook from the same conda environment you prepared for training.
-2. Open `notebooks/train_detector.ipynb`.
-3. Run the CUDA probe cell before training.
-4. Start with the notebook smoke-test config.
-5. Increase epochs/image size/batch only after the smoke test succeeds.
+## Near-Term Roadmap
 
-## 10) First Things To Run
-
-If you just cloned/opened the repo:
-
-```bash
-pip install -r requirements.txt
-python -m src.utils.dataset_checks --data configs/dataset_thermal_uav.yaml
-python -m src.detection.train --config configs/train_detector.yaml
-```
-
-## 11) Which File To Edit First For Your Dataset
-
-Edit this first:
-- `configs/dataset_thermal_uav.yaml`
-
-Then place your images/labels under:
-- `data/thermal_uav/images/*`
-- `data/thermal_uav/labels/*`
-
-## 12) Where `best.pt` Goes
-
-After training, `best.pt` is automatically created at:
-- `runs/detect/<run_name>/weights/best.pt`
-
-For inference/tracking, pass that path to:
-- `--weights`
-
-## 13) Extension Roadmap
-
-This codebase is structured to extend without breaking current workflows:
-
-1. RGB + Thermal fusion:
-   - add a new loader/module under `src/detection/` for dual-stream input
-   - add a fusion model config and fusion training entry point
-2. Higher resolutions:
-   - update `imgsz` in config/CLI and tune batch size
-3. Thermal enhancement:
-   - add preprocessing pipeline under `src/utils/` (CLAHE, denoising, super-resolution)
-   - call it in `src/detection/infer.py` and training dataloader path
-4. Acoustic fusion:
-   - add a feature encoder branch and late fusion tracker association module under `src/tracking/`
-
-The current design keeps interfaces stable so these additions can be layered on top of the existing detector + tracker pipeline.
+- stronger thermal detector training runs
+- IR-only and RGB-only branch fusion using weighted box fusion
+- future drone distance estimation
