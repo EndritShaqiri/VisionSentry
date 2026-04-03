@@ -20,9 +20,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements_app.txt
 
 # Copy application files
-COPY model_comparison_app.py .
+COPY drone_detection_app.py .
 COPY weights/ ./weights/
-COPY VisionSentry-dex-rgb-model-replication/weights/ ./VisionSentry-dex-rgb-model-replication/weights/
 
 # Expose port
 EXPOSE 7860
@@ -32,4 +31,4 @@ ENV GRADIO_SERVER_NAME=0.0.0.0
 ENV GRADIO_SERVER_PORT=7860
 
 # Run the application
-CMD ["python", "model_comparison_app.py"]
+CMD ["python", "drone_detection_app.py"]
