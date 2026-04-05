@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import replace
 from pathlib import Path
+import shutil
 from typing import Any
 
 import cv2
@@ -127,9 +129,11 @@ def main() -> None:
     mot_path = save_dir / cfg["mot_txt_name"]
     mot_file = mot_path.open("w", encoding="utf-8")
     track_ranges_path = save_dir / "track_ranges.csv"
+    render_base_dir = save_dir / ".range_overlay_base"
     ranging_estimator = None
     ranging_runtime_path = None
     all_track_estimates = []
+    frame_overlay_records: list[tuple[int, Path, list[Any]]] = []
     if cfg["ranging"]:
         ranging_estimator = RangeEstimator.from_paths(
             config_path=cfg["ranging_config"],
@@ -137,6 +141,8 @@ def main() -> None:
             modality=cfg.get("ranging_modality"),
         )
         ranging_runtime_path = ranging_estimator.save_runtime_config(save_dir)
+        if cfg["save_video"] or cfg["save_frames"]:
+            render_base_dir.mkdir(parents=True, exist_ok=True)
 
     print("Tracking config:")
     for key in sorted(cfg.keys()):
@@ -193,20 +199,25 @@ def main() -> None:
                 all_track_estimates.extend(estimates)
 
         annotated = result.plot(line_width=1, font_size=10)
-        if ranging_estimator is not None and estimates:
-            annotated = ranging_estimator.annotate_frame(annotated, estimates)
         h, w = annotated.shape[:2]
-
-        if cfg["save_video"] and video_writer is None:
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            video_writer = cv2.VideoWriter(str(output_video_path), fourcc, fps, (w, h))
-
-        if video_writer is not None:
-            video_writer.write(annotated)
-
-        if cfg["save_frames"]:
-            frame_path = frames_dir / f"{frame_idx:06d}.jpg"
+        if ranging_estimator is not None and (cfg["save_video"] or cfg["save_frames"]):
+            frame_path = render_base_dir / f"{frame_idx:06d}.jpg"
             cv2.imwrite(str(frame_path), annotated)
+            frame_overlay_records.append((frame_idx, frame_path, estimates))
+        else:
+            if ranging_estimator is not None and estimates:
+                annotated = ranging_estimator.annotate_frame(annotated, estimates)
+
+            if cfg["save_video"] and video_writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writer = cv2.VideoWriter(str(output_video_path), fourcc, fps, (w, h))
+
+            if video_writer is not None:
+                video_writer.write(annotated)
+
+            if cfg["save_frames"]:
+                frame_path = frames_dir / f"{frame_idx:06d}.jpg"
+                cv2.imwrite(str(frame_path), annotated)
 
         boxes = result.boxes
         if boxes is None or boxes.id is None or len(boxes) == 0:
@@ -228,14 +239,15 @@ def main() -> None:
         video_writer.release()
     mot_file.close()
 
+    smoothed_tracks: dict[int, list[Any]] = {}
     if ranging_estimator is not None and all_track_estimates:
         temporal_cfg = ranging_estimator.cfg.get("temporal", {})
         smoothed_tracks = smooth_track_ranges(
             all_track_estimates,
             process_noise_m2=float(temporal_cfg.get("process_noise_m2", 9.0)),
-            min_measurement_std_m=float(temporal_cfg.get("min_measurement_std_m", 2.0)),
-            measurement_noise_scale=float(temporal_cfg.get("measurement_noise_scale", 1.0)),
-            range_bins_m=ranging_estimator.cfg.get("range_bins_m", [25.0, 75.0]),
+            min_measurement_std_m=float(temporal_cfg.get("min_measurement_std_m", 6.0)),
+            measurement_noise_scale=float(temporal_cfg.get("measurement_noise_scale", 1.2)),
+            range_bins_m=ranging_estimator.cfg.get("range_bins_m", [50.0, 150.0]),
         )
         with track_ranges_path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(
@@ -247,7 +259,10 @@ def main() -> None:
                     "distance_m_filtered",
                     "distance_m_refined",
                     "distance_std_m",
+                    "raw_distance_std_m",
+                    "display_distance_std_m",
                     "distance_confidence",
+                    "quality_score",
                     "range_bin",
                     "low_confidence",
                 ],
@@ -255,7 +270,55 @@ def main() -> None:
             writer.writeheader()
             for track_id in sorted(smoothed_tracks.keys()):
                 for item in smoothed_tracks[track_id]:
+                    item.display_distance_std_m = (
+                        ranging_estimator.build_display_std(
+                            distance_m=item.distance_m_refined,
+                            raw_std_m=item.distance_std_m,
+                            quality_score=item.quality_score,
+                        )
+                        or item.distance_std_m
+                    )
                     writer.writerow(item.as_csv_row())
+
+    if ranging_estimator is not None and frame_overlay_records:
+        smoothed_lookup = {
+            (item.frame_index, item.track_id): item
+            for items in smoothed_tracks.values()
+            for item in items
+        }
+        for frame_idx, base_frame_path, estimates in frame_overlay_records:
+            annotated = cv2.imread(str(base_frame_path))
+            overlay_estimates = []
+            for estimate in estimates:
+                refined = smoothed_lookup.get((estimate.frame_index, estimate.track_id or -1))
+                if refined is None:
+                    overlay_estimates.append(estimate)
+                    continue
+                overlay_estimates.append(
+                    replace(
+                        estimate,
+                        distance_m=refined.distance_m_refined,
+                        distance_std_m=refined.distance_std_m,
+                        display_distance_std_m=refined.display_distance_std_m,
+                        distance_confidence=refined.distance_confidence,
+                        quality_score=refined.quality_score,
+                        range_bin=refined.range_bin,
+                        low_confidence=refined.low_confidence,
+                    )
+                )
+            if overlay_estimates:
+                annotated = ranging_estimator.annotate_frame(annotated, overlay_estimates)
+
+            if cfg["save_video"] and video_writer is None:
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                video_writer = cv2.VideoWriter(str(output_video_path), fourcc, fps, (annotated.shape[1], annotated.shape[0]))
+            if video_writer is not None:
+                video_writer.write(annotated)
+            if cfg["save_frames"]:
+                frame_path = frames_dir / f"{frame_idx:06d}.jpg"
+                cv2.imwrite(str(frame_path), annotated)
+        if video_writer is not None:
+            video_writer.release()
 
     if cfg["save_video"]:
         print(f"[OK] Tracked video: {output_video_path.resolve()}")
@@ -266,6 +329,8 @@ def main() -> None:
         print(f"[OK] Track ranges CSV: {track_ranges_path.resolve()}")
     if ranging_runtime_path is not None:
         print(f"[OK] Ranging runtime config: {ranging_runtime_path.resolve()}")
+    if render_base_dir.exists():
+        shutil.rmtree(render_base_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

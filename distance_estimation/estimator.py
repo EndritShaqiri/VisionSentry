@@ -95,7 +95,14 @@ class RangeEstimator:
         for estimate in estimates:
             if estimate.distance_m is None:
                 continue
-            text = f"{estimate.distance_m:.1f}m +/- {estimate.distance_std_m or 0.0:.1f}"
+            quality = float(estimate.quality_score or 0.0)
+            if self.should_use_range_bin_overlay(quality) and estimate.range_bin != "unknown":
+                text = estimate.range_bin.replace("_", " ").title()
+            else:
+                display_std = estimate.display_distance_std_m if estimate.display_distance_std_m is not None else estimate.distance_std_m
+                text = f"{estimate.distance_m:.1f}m"
+                if display_std is not None:
+                    text = f"{text} +/- {display_std:.1f}"
             if estimate.track_id is not None:
                 text = f"ID {estimate.track_id} | {text}"
             x1 = int(max(0.0, estimate.x_center - (estimate.width / 2.0)))
@@ -112,6 +119,32 @@ class RangeEstimator:
                 cv2.LINE_AA,
             )
         return annotated
+
+    def build_display_std(self, *, distance_m: float | None, raw_std_m: float | None, quality_score: float | None) -> float | None:
+        if distance_m is None or raw_std_m is None:
+            return raw_std_m
+
+        policy_cfg = self.cfg.get("uncertainty_policy", {})
+        if not policy_cfg.get("use_quality_aware_display", True):
+            return raw_std_m
+
+        quality = min(1.0, max(0.0, float(quality_score or 0.0)))
+        precise_floor = float(policy_cfg.get("min_quality_for_precise_overlay", 0.80))
+        meter_floor = float(policy_cfg.get("min_quality_for_meter_overlay", 0.50))
+        if quality >= precise_floor:
+            target = float(policy_cfg.get("target_relative_std_high_quality", 0.15)) * distance_m
+            return min(raw_std_m, target)
+        if quality >= meter_floor:
+            target = float(policy_cfg.get("target_relative_std_medium_quality", 0.25)) * distance_m
+            return min(raw_std_m, target)
+        return raw_std_m
+
+    def should_use_range_bin_overlay(self, quality_score: float | None) -> bool:
+        policy_cfg = self.cfg.get("uncertainty_policy", {})
+        if not policy_cfg.get("use_range_bins_when_low_quality", True):
+            return False
+        quality = min(1.0, max(0.0, float(quality_score or 0.0)))
+        return quality < float(policy_cfg.get("min_quality_for_meter_overlay", 0.50))
 
     def _combine_cues(
         self,
@@ -158,7 +191,7 @@ class RangeEstimator:
             if depth_distance is None and geometry_nominal is None:
                 geometry_min = max(distance_m - (2.0 * model_std), 0.0)
                 geometry_max = distance_m + (2.0 * model_std)
-            range_bin = range_bin_from_logits(ordinal_logits.squeeze(0), self.cfg.get("range_bins_m", [25.0, 75.0]))
+            range_bin = range_bin_from_logits(ordinal_logits.squeeze(0), self.cfg.get("range_bins_m", [50.0, 150.0]))
             notes.append("learned_head")
         else:
             bbox_weight = float(hybrid_cfg.get("bbox_weight", 1.0))
@@ -168,33 +201,49 @@ class RangeEstimator:
                 distance_m = ((bbox_weight * geometry_nominal) + (depth_weight * (depth_distance or 0.0))) / total_weight
             elif depth_distance is not None:
                 distance_m = depth_distance
-            range_bin = classify_range_bin(distance_m, self.cfg.get("range_bins_m", [25.0, 75.0]))
+            range_bin = classify_range_bin(distance_m, self.cfg.get("range_bins_m", [50.0, 150.0]))
 
-        distance_std = None
+        raw_distance_std = None
         if distance_m is not None:
             spread_std = max(
                 ((geometry_max or distance_m) - (geometry_min or distance_m)) / 4.0,
                 float(hybrid_cfg.get("uncertainty_floor_m", 2.0)),
             )
             depth_std = depth_stats.std_m or 0.0
-            distance_std = max(spread_std, depth_std)
-            distance_std *= 1.0 + ((1.0 - min(max(detection.score, 0.0), 1.0)) * float(hybrid_cfg.get("low_score_penalty", 1.5)))
+            raw_distance_std = max(spread_std, depth_std)
+            low_score_penalty = float(hybrid_cfg.get("low_score_penalty", 1.1))
+            raw_distance_std *= 1.0 + (
+                (1.0 - min(max(detection.score, 0.0), 1.0)) * max(0.0, low_score_penalty - 1.0)
+            )
             if bbox_diag > 0:
                 tiny_scale = min(
                     float(hybrid_cfg.get("tiny_bbox_penalty_cap", 3.0)),
                     max(1.0, float(hybrid_cfg.get("small_bbox_px", 18.0)) / bbox_diag),
                 )
-                distance_std *= tiny_scale
+                raw_distance_std *= tiny_scale
             if used_fallback_camera:
-                distance_std *= float(hybrid_cfg.get("fallback_camera_penalty", 1.35))
+                raw_distance_std *= float(hybrid_cfg.get("fallback_camera_penalty", 1.2))
+            max_relative_std_raw = float(self.cfg.get("uncertainty_policy", {}).get("max_relative_std_raw", 0.35))
+            raw_distance_std = min(raw_distance_std, max_relative_std_raw * max(distance_m, 1.0))
+
+        quality_score = self._compute_quality_score(
+            detection_score=detection.score,
+            bbox_diag=bbox_diag,
+            bbox_quality=bbox_quality,
+            used_fallback_camera=used_fallback_camera,
+        )
+        display_distance_std = self.build_display_std(
+            distance_m=distance_m,
+            raw_std_m=raw_distance_std,
+            quality_score=quality_score,
+        )
+
         confidence = 0.0
-        if distance_m is not None and distance_std is not None:
+        if distance_m is not None and raw_distance_std is not None:
             confidence = min(
                 0.99,
-                detection.score * bbox_quality * (1.0 / (1.0 + (distance_std / max(distance_m, 1.0)))),
+                quality_score * (1.0 / (1.0 + (raw_distance_std / max(distance_m, 1.0)))),
             )
-            if used_fallback_camera:
-                confidence *= 0.8
         low_confidence = confidence < float(hybrid_cfg.get("confidence_threshold", 0.35))
 
         if depth_warning:
@@ -212,8 +261,10 @@ class RangeEstimator:
             height=detection.height,
             track_id=detection.track_id,
             distance_m=distance_m,
-            distance_std_m=distance_std,
+            distance_std_m=raw_distance_std,
+            display_distance_std_m=display_distance_std,
             distance_confidence=confidence,
+            quality_score=quality_score,
             range_bin=range_bin,
             low_confidence=low_confidence,
             geometric_distance_m=geometry_nominal,
@@ -223,6 +274,24 @@ class RangeEstimator:
             used_fallback_camera=used_fallback_camera,
             notes=";".join(notes) if notes else None,
         )
+
+    def _compute_quality_score(
+        self,
+        *,
+        detection_score: float,
+        bbox_diag: float,
+        bbox_quality: float,
+        used_fallback_camera: bool,
+    ) -> float:
+        small_bbox_px = max(float(self.cfg.get("hybrid_head", {}).get("small_bbox_px", 20.0)), 1.0)
+        score_quality = min(1.0, max(0.0, float(detection_score)))
+        bbox_quality = min(1.0, max(0.0, float(bbox_quality)))
+        quality = (0.5 * score_quality) + (0.5 * bbox_quality)
+        if used_fallback_camera:
+            quality *= 0.9
+        if bbox_diag < small_bbox_px:
+            quality *= max(0.75, bbox_quality)
+        return min(1.0, max(0.0, quality))
 
     def _load_range_head_if_available(self) -> None:
         head_cfg = self.cfg.get("range_head", {})

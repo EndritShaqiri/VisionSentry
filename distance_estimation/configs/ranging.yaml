@@ -21,16 +21,19 @@ camera:
   fy_px: null
   hfov_deg: null
   vfov_deg: null
-  default_hfov_deg: 60.0
-  default_vfov_deg: 45.0
+  default_hfov_deg: 24.0
+  default_vfov_deg: 19.0
 
 object_priors:
-  nominal_width_m: 0.35
-  nominal_height_m: 0.12
-  min_width_m: 0.10
-  max_width_m: 0.80
-  min_height_m: 0.05
-  max_height_m: 0.30
+  nominal_width_m: 0.90
+  nominal_height_m: 0.25
+  min_width_m: 0.40
+  max_width_m: 1.80
+  min_height_m: 0.10
+  max_height_m: 0.50
+  geometry_mode: width_only
+  bbox_width_scale: 0.60
+  bbox_height_scale: 0.60
 
 feature_columns:
   - score
@@ -54,20 +57,29 @@ hybrid_head:
   depth_weight: 0.35
   min_depth_valid_fraction: 0.15
   minimum_bbox_px: 6.0
-  small_bbox_px: 18.0
+  small_bbox_px: 20.0
   confidence_threshold: 0.35
-  uncertainty_floor_m: 2.0
-  fallback_camera_penalty: 1.35
-  low_score_penalty: 1.5
-  tiny_bbox_penalty_cap: 3.0
+  uncertainty_floor_m: 6.0
+  fallback_camera_penalty: 1.20
+  low_score_penalty: 1.10
+  tiny_bbox_penalty_cap: 2.0
   overlay: true
 
+uncertainty_policy:
+  use_quality_aware_display: true
+  max_relative_std_raw: 0.35
+  target_relative_std_high_quality: 0.15
+  target_relative_std_medium_quality: 0.25
+  min_quality_for_precise_overlay: 0.80
+  min_quality_for_meter_overlay: 0.50
+  use_range_bins_when_low_quality: true
+
 range_bins_m:
-  - 25.0
-  - 75.0
+  - 50.0
+  - 150.0
 
 temporal:
   enabled: true
   process_noise_m2: 9.0
-  measurement_noise_scale: 1.0
-  min_measurement_std_m: 2.0
+  measurement_noise_scale: 1.2
+  min_measurement_std_m: 6.0

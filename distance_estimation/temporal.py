@@ -66,6 +66,7 @@ class TrackSmoother:
         for estimate, filtered_state, refined_mean, refined_var in zip(ordered, states, smoothed_means, smoothed_vars):
             raw_distance = estimate.distance_m if estimate.distance_m is not None else filtered_state.mean
             confidence = estimate.distance_confidence if estimate.distance_confidence is not None else 0.0
+            quality_score = estimate.quality_score if estimate.quality_score is not None else 0.0
             results.append(
                 TrackRangeEstimate(
                     frame_index=estimate.frame_index,
@@ -74,7 +75,9 @@ class TrackSmoother:
                     distance_m_filtered=filtered_state.mean,
                     distance_m_refined=refined_mean,
                     distance_std_m=math.sqrt(refined_var),
+                    display_distance_std_m=math.sqrt(refined_var),
                     distance_confidence=confidence,
+                    quality_score=quality_score,
                     range_bin=classify_range_bin(refined_mean, range_bins_m),
                     low_confidence=estimate.low_confidence,
                 )

@@ -111,8 +111,8 @@ def main() -> None:
         det_writer = detections_csv.open("w", encoding="utf-8")
         if ranging_estimator is not None:
             det_writer.write(
-                "frame,track_id,class_id,x,y,w,h,score,distance_m,distance_std_m,distance_confidence,"
-                "range_bin,low_confidence,distance_min_m,distance_max_m,geometric_distance_m,"
+                "frame,track_id,class_id,x,y,w,h,score,distance_m,distance_std_m,raw_distance_std_m,"
+                "display_distance_std_m,distance_confidence,quality_score,range_bin,low_confidence,distance_min_m,distance_max_m,geometric_distance_m,"
                 "depth_distance_m,used_fallback_camera,notes\n"
             )
         else:
@@ -185,7 +185,8 @@ def main() -> None:
                     row = estimate.as_csv_row()
                     det_writer.write(
                         f"{row['frame']},{row['track_id']},{row['class_id']},{row['x']},{row['y']},{row['w']},{row['h']},"
-                        f"{row['score']},{row['distance_m']},{row['distance_std_m']},{row['distance_confidence']},"
+                        f"{row['score']},{row['distance_m']},{row['distance_std_m']},{row['raw_distance_std_m']},"
+                        f"{row['display_distance_std_m']},{row['distance_confidence']},{row['quality_score']},"
                         f"{row['range_bin']},{row['low_confidence']},{row['distance_min_m']},{row['distance_max_m']},"
                         f"{row['geometric_distance_m']},{row['depth_distance_m']},{row['used_fallback_camera']},{row['notes']}\n"
                     )

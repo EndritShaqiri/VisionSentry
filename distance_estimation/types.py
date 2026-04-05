@@ -49,7 +49,9 @@ class RangeEstimate:
     track_id: int | None = None
     distance_m: float | None = None
     distance_std_m: float | None = None
+    display_distance_std_m: float | None = None
     distance_confidence: float | None = None
+    quality_score: float | None = None
     range_bin: str = "unknown"
     low_confidence: bool = True
     geometric_distance_m: float | None = None
@@ -70,8 +72,11 @@ class RangeEstimate:
             "h": round(self.height, 4),
             "score": round(self.score, 6),
             "distance_m": _round_or_blank(self.distance_m),
-            "distance_std_m": _round_or_blank(self.distance_std_m),
+            "distance_std_m": _round_or_blank(self.display_distance_std_m if self.display_distance_std_m is not None else self.distance_std_m),
+            "raw_distance_std_m": _round_or_blank(self.distance_std_m),
+            "display_distance_std_m": _round_or_blank(self.display_distance_std_m),
             "distance_confidence": _round_or_blank(self.distance_confidence),
+            "quality_score": _round_or_blank(self.quality_score),
             "range_bin": self.range_bin,
             "low_confidence": self.low_confidence,
             "distance_min_m": _round_or_blank(self.distance_min_m),
@@ -91,7 +96,9 @@ class TrackRangeEstimate:
     distance_m_filtered: float
     distance_m_refined: float
     distance_std_m: float
+    display_distance_std_m: float
     distance_confidence: float
+    quality_score: float
     range_bin: str
     low_confidence: bool
 
@@ -102,8 +109,11 @@ class TrackRangeEstimate:
             "distance_m_raw": round(self.distance_m_raw, 4),
             "distance_m_filtered": round(self.distance_m_filtered, 4),
             "distance_m_refined": round(self.distance_m_refined, 4),
-            "distance_std_m": round(self.distance_std_m, 4),
+            "distance_std_m": round(self.display_distance_std_m, 4),
+            "raw_distance_std_m": round(self.distance_std_m, 4),
+            "display_distance_std_m": round(self.display_distance_std_m, 4),
             "distance_confidence": round(self.distance_confidence, 6),
+            "quality_score": round(self.quality_score, 6),
             "range_bin": self.range_bin,
             "low_confidence": self.low_confidence,
         }
