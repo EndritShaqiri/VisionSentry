@@ -22,3 +22,4 @@ data/thermal_uav/labels/**/*
 !data/thermal_uav/labels/train/.gitkeep
 !data/thermal_uav/labels/val/.gitkeep
 !data/thermal_uav/labels/test/.gitkeep
+data/*

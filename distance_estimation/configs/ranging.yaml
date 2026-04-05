@@ -1,0 +1,73 @@
+enabled: false
+modality: ir
+camera_profile_path: distance_estimation/configs/camera_ir.yaml
+
+depth_backbone:
+  name: none
+  allow_missing: true
+  custom:
+    module: null
+    class: null
+    init_kwargs: {}
+
+range_head:
+  name: heuristic
+  checkpoint: distance_estimation/weights/range_head.pt
+  allow_missing: true
+
+camera:
+  name: generic_camera
+  fx_px: null
+  fy_px: null
+  hfov_deg: null
+  vfov_deg: null
+  default_hfov_deg: 60.0
+  default_vfov_deg: 45.0
+
+object_priors:
+  nominal_width_m: 0.35
+  nominal_height_m: 0.12
+  min_width_m: 0.10
+  max_width_m: 0.80
+  min_height_m: 0.05
+  max_height_m: 0.30
+
+feature_columns:
+  - score
+  - x_norm
+  - y_norm
+  - w_norm
+  - h_norm
+  - area_norm
+  - aspect_ratio
+  - bbox_diag_px
+  - geometric_distance_m
+  - distance_min_m
+  - distance_max_m
+  - depth_median_m
+  - depth_std_m
+  - depth_valid_fraction
+  - fallback_camera
+
+hybrid_head:
+  bbox_weight: 1.0
+  depth_weight: 0.35
+  min_depth_valid_fraction: 0.15
+  minimum_bbox_px: 6.0
+  small_bbox_px: 18.0
+  confidence_threshold: 0.35
+  uncertainty_floor_m: 2.0
+  fallback_camera_penalty: 1.35
+  low_score_penalty: 1.5
+  tiny_bbox_penalty_cap: 3.0
+  overlay: true
+
+range_bins_m:
+  - 25.0
+  - 75.0
+
+temporal:
+  enabled: true
+  process_noise_m2: 9.0
+  measurement_noise_scale: 1.0
+  min_measurement_std_m: 2.0

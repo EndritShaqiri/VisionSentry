@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import cv2
 import yaml
 from ultralytics import YOLO
 
+from distance_estimation import DetectionInput, RangeEstimator, smooth_track_ranges
 from src.utils.paths import get_video_fps, make_run_dir, resolve_existing_path
 
 DEFAULTS: dict[str, Any] = {
@@ -27,6 +29,10 @@ DEFAULTS: dict[str, Any] = {
     "fps": 30.0,
     "with_reid": None,
     "class_id": 0,
+    "ranging": False,
+    "ranging_config": "distance_estimation/configs/ranging.yaml",
+    "camera_config": None,
+    "ranging_modality": "ir",
 }
 
 
@@ -58,6 +64,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=float, default=None, help="Fallback FPS for frame-folder inputs.")
     parser.add_argument("--with_reid", type=str2bool, default=None, help="Override tracker with_reid setting.")
     parser.add_argument("--class_id", type=int, default=None, help="Class filter. Use 0 for single-class UAV.")
+    parser.add_argument("--ranging", type=str2bool, default=None, help="Enable distance estimation.")
+    parser.add_argument("--ranging_config", type=str, default=None, help="Distance-estimation YAML config path.")
+    parser.add_argument("--camera_config", type=str, default=None, help="Optional camera profile YAML path.")
+    parser.add_argument("--ranging_modality", type=str, default=None, choices=["ir", "rgb"], help="Distance-estimation modality.")
     return parser.parse_args()
 
 
@@ -116,6 +126,17 @@ def main() -> None:
 
     mot_path = save_dir / cfg["mot_txt_name"]
     mot_file = mot_path.open("w", encoding="utf-8")
+    track_ranges_path = save_dir / "track_ranges.csv"
+    ranging_estimator = None
+    ranging_runtime_path = None
+    all_track_estimates = []
+    if cfg["ranging"]:
+        ranging_estimator = RangeEstimator.from_paths(
+            config_path=cfg["ranging_config"],
+            camera_config_path=cfg.get("camera_config"),
+            modality=cfg.get("ranging_modality"),
+        )
+        ranging_runtime_path = ranging_estimator.save_runtime_config(save_dir)
 
     print("Tracking config:")
     for key in sorted(cfg.keys()):
@@ -144,7 +165,36 @@ def main() -> None:
     output_video_path = save_dir / "tracked.mp4"
 
     for frame_idx, result in enumerate(stream, start=1):
-        annotated = result.plot()
+        estimates = []
+        if result.boxes is not None and result.boxes.id is not None and len(result.boxes) > 0:
+            ids = result.boxes.id.int().cpu().numpy()
+            xywh = result.boxes.xywh.cpu().numpy()
+            confs = result.boxes.conf.cpu().numpy()
+            class_ids = result.boxes.cls.int().cpu().numpy()
+            detections = [
+                DetectionInput(
+                    frame_index=frame_idx,
+                    class_id=int(cls_id),
+                    score=float(score),
+                    x_center=float(box[0]),
+                    y_center=float(box[1]),
+                    width=float(box[2]),
+                    height=float(box[3]),
+                    track_id=int(track_id),
+                )
+                for track_id, box, score, cls_id in zip(ids, xywh, confs, class_ids)
+            ]
+            if ranging_estimator is not None:
+                estimates = ranging_estimator.estimate_detections(
+                    result.orig_img,
+                    detections,
+                    modality=cfg["ranging_modality"],
+                )
+                all_track_estimates.extend(estimates)
+
+        annotated = result.plot(line_width=1, font_size=10)
+        if ranging_estimator is not None and estimates:
+            annotated = ranging_estimator.annotate_frame(annotated, estimates)
         h, w = annotated.shape[:2]
 
         if cfg["save_video"] and video_writer is None:
@@ -178,11 +228,44 @@ def main() -> None:
         video_writer.release()
     mot_file.close()
 
+    if ranging_estimator is not None and all_track_estimates:
+        temporal_cfg = ranging_estimator.cfg.get("temporal", {})
+        smoothed_tracks = smooth_track_ranges(
+            all_track_estimates,
+            process_noise_m2=float(temporal_cfg.get("process_noise_m2", 9.0)),
+            min_measurement_std_m=float(temporal_cfg.get("min_measurement_std_m", 2.0)),
+            measurement_noise_scale=float(temporal_cfg.get("measurement_noise_scale", 1.0)),
+            range_bins_m=ranging_estimator.cfg.get("range_bins_m", [25.0, 75.0]),
+        )
+        with track_ranges_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "frame",
+                    "track_id",
+                    "distance_m_raw",
+                    "distance_m_filtered",
+                    "distance_m_refined",
+                    "distance_std_m",
+                    "distance_confidence",
+                    "range_bin",
+                    "low_confidence",
+                ],
+            )
+            writer.writeheader()
+            for track_id in sorted(smoothed_tracks.keys()):
+                for item in smoothed_tracks[track_id]:
+                    writer.writerow(item.as_csv_row())
+
     if cfg["save_video"]:
         print(f"[OK] Tracked video: {output_video_path.resolve()}")
     if cfg["save_frames"]:
         print(f"[OK] Annotated frames dir: {frames_dir.resolve()}")
     print(f"[OK] MOT results: {mot_path.resolve()}")
+    if ranging_estimator is not None and all_track_estimates:
+        print(f"[OK] Track ranges CSV: {track_ranges_path.resolve()}")
+    if ranging_runtime_path is not None:
+        print(f"[OK] Ranging runtime config: {ranging_runtime_path.resolve()}")
 
 
 if __name__ == "__main__":
