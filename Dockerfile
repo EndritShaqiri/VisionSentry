@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for OpenCV, matplotlib, and torch
+# Install system dependencies for OpenCV, matplotlib, torch, and ffmpeg.
+# ffmpeg is required by Gradio to transcode video uploads/outputs to browser-playable H.264.
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -10,9 +11,15 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first (better layer caching)
+# Install CPU-only PyTorch first so ultralytics does not pull the CUDA stack
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision
+
+# Install the rest (ultralytics will reuse the already-installed CPU torch)
 COPY requirements_app.txt .
 RUN pip install --no-cache-dir -r requirements_app.txt
 

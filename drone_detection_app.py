@@ -1,6 +1,8 @@
 import gradio as gr
 import cv2
 import csv
+import shutil
+import subprocess
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -153,14 +155,22 @@ class DroneDetector:
         output_path = output_dir / f"detected_{timestamp}.mp4"
         csv_path = output_dir / f"detections_{timestamp}.csv"
         
-        # Video writer - use H264 codec for better browser compatibility
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-        
-        # Fallback to mp4v if avc1 fails
-        if not out.isOpened():
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+        # Video writer. mp4v is the most portable codec with opencv-python-headless
+        # (avc1/h264 require system libx264, which is not in the headless wheel and
+        # can fall through to broken backends like h264_v4l2m2m inside Docker).
+        out = None
+        for codec in ("mp4v", "avc1", "XVID"):
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            candidate = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+            if candidate.isOpened():
+                out = candidate
+                break
+            candidate.release()
+        if out is None or not out.isOpened():
+            raise RuntimeError(
+                "Could not initialize any VideoWriter codec (tried mp4v, avc1, XVID). "
+                "Check that ffmpeg is available in the container."
+            )
         
         # Track detections
         total_detections = 0
@@ -258,6 +268,26 @@ class DroneDetector:
         # Verify output file exists and has content
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("Output video was not created properly")
+
+        # Browsers cannot play mp4v. Transcode to H.264 if ffmpeg is available
+        # (it is in the Docker image and on most dev machines via Homebrew).
+        if shutil.which("ffmpeg"):
+            h264_path = output_dir / f"detected_{timestamp}_h264.mp4"
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        "-i", str(output_path),
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                        str(h264_path),
+                    ],
+                    check=True,
+                )
+                if h264_path.exists() and h264_path.stat().st_size > 0:
+                    output_path = h264_path
+            except subprocess.CalledProcessError as exc:
+                print(f"[warn] ffmpeg transcode failed, serving mp4v file: {exc}")
         
         # Generate detection graph
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -362,7 +392,11 @@ def create_interface(model_path):
             """)
             
             with gr.Row():
-                video_input = gr.File(label="Upload Video File (Max 100MB)", file_types=["video"], type="filepath")
+                video_input = gr.File(
+                    label="Upload Video File (Max 100MB)",
+                    file_types=["video"],
+                    type="filepath",
+                )
 
             with gr.Row():
                 video_distance_toggle = gr.Checkbox(
