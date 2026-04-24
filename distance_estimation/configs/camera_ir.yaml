@@ -1,0 +1,8 @@
+name: generic_ir_camera
+fx_px: null
+fy_px: null
+hfov_deg: null
+vfov_deg: null
+default_hfov_deg: 24.0
+default_vfov_deg: 19.0
+notes: "Conservative narrow-FOV thermal defaults. Override with your real IR camera intrinsics whenever available."

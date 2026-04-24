@@ -8,41 +8,37 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
 
-class ModelComparison:
-    def __init__(self, model1_path, model2_path):
-        """Initialize with two model paths"""
-        self.model1 = YOLO(model1_path)
-        self.model2 = YOLO(model2_path)
-        self.model1_name = Path(model1_path).parent.parent.name if 'runs' in model1_path else "Thermal Model"
-        self.model2_name = Path(model2_path).parent.parent.name if 'runs' in model2_path else "RGB Model"
+class DroneDetector:
+    def __init__(self, model_path):
+        """Initialize with thermal/IR model path"""
+        self.model = YOLO(model_path)
+        self.model_name = "Thermal/IR Drone Detector"
     
     def process_image(self, image):
-        """Process a single image with both models"""
-        # Run inference with both models (CPU only for deployment)
-        results1 = self.model1(image, conf=0.25, iou=0.5, device='cpu')[0]
-        results2 = self.model2(image, conf=0.25, iou=0.5, device='cpu')[0]
+        """Process a single image with thermal/IR model"""
+        # Run inference (CPU only for deployment)
+        results = self.model(image, conf=0.25, iou=0.5, device='cpu')[0]
         
-        # Get annotated images
-        img1 = results1.plot()
-        img2 = results2.plot()
+        # Get annotated image
+        img = results.plot()
         
-        # Get detection counts
-        count1 = len(results1.boxes) if results1.boxes is not None else 0
-        count2 = len(results2.boxes) if results2.boxes is not None else 0
+        # Get detection count
+        count = len(results.boxes) if results.boxes is not None else 0
         
         # Convert BGR to RGB for display
-        img1_rgb = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-        img2_rgb = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
         stats = f"""
-        **Model 1 ({self.model1_name})**: {count1} detections
-        **Model 2 ({self.model2_name})**: {count2} detections
+        ### Detection Results
+        **Drones Detected**: {count}
+        **Confidence Threshold**: 0.25
+        **Model**: {self.model_name}
         """
         
-        return img1_rgb, img2_rgb, stats
+        return img_rgb, stats
     
     def process_video(self, video_path, progress=gr.Progress()):
-        """Process video with both models"""
+        """Process video with thermal/IR model"""
         # Check file size (100MB limit)
         import os
         if video_path and os.path.exists(video_path):
@@ -63,31 +59,25 @@ class ModelComparison:
         temp_dir = tempfile.mkdtemp()
         output_dir = Path(temp_dir)
         
-        # Generate unique filenames with timestamp
+        # Generate unique filename with timestamp
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output1_path = output_dir / f"model1_{timestamp}.mp4"
-        output2_path = output_dir / f"model2_{timestamp}.mp4"
+        output_path = output_dir / f"detected_{timestamp}.mp4"
         
-        # Video writers - use H264 codec for better browser compatibility
+        # Video writer - use H264 codec for better browser compatibility
         fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        out1 = cv2.VideoWriter(str(output1_path), fourcc, fps, (width, height))
-        out2 = cv2.VideoWriter(str(output2_path), fourcc, fps, (width, height))
+        out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         
-        # Check if video writers opened successfully
-        if not out1.isOpened() or not out2.isOpened():
-            # Fallback to mp4v if avc1 fails
+        # Fallback to mp4v if avc1 fails
+        if not out.isOpened():
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out1 = cv2.VideoWriter(str(output1_path), fourcc, fps, (width, height))
-            out2 = cv2.VideoWriter(str(output2_path), fourcc, fps, (width, height))
+            out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
         
-        total_detections1 = 0
-        total_detections2 = 0
+        total_detections = 0
         frame_count = 0
         
         # Track detections per frame for graphing
-        detections_per_frame1 = []
-        detections_per_frame2 = []
+        detections_per_frame = []
         frame_numbers = []
         
         while cap.isOpened():
@@ -96,75 +86,75 @@ class ModelComparison:
                 break
             
             # Run inference (CPU only for deployment)
-            results1 = self.model1(frame, conf=0.25, iou=0.5, device='cpu', verbose=False)[0]
-            results2 = self.model2(frame, conf=0.25, iou=0.5, device='cpu', verbose=False)[0]
+            results = self.model(frame, conf=0.25, iou=0.5, device='cpu', verbose=False)[0]
             
-            # Get annotated frames
-            annotated1 = results1.plot()
-            annotated2 = results2.plot()
+            # Get annotated frame
+            annotated = results.plot()
             
-            # Write frames
-            out1.write(annotated1)
-            out2.write(annotated2)
+            # Write frame
+            out.write(annotated)
             
             # Count detections for this frame
-            count1 = len(results1.boxes) if results1.boxes is not None else 0
-            count2 = len(results2.boxes) if results2.boxes is not None else 0
+            count = len(results.boxes) if results.boxes is not None else 0
             
-            total_detections1 += count1
-            total_detections2 += count2
+            total_detections += count
             
             # Track per-frame data
             frame_numbers.append(frame_count)
-            detections_per_frame1.append(count1)
-            detections_per_frame2.append(count2)
+            detections_per_frame.append(count)
             
             frame_count += 1
             if progress is not None:
                 progress(frame_count / total_frames, desc=f"Processing frame {frame_count}/{total_frames}")
         
         cap.release()
-        out1.release()
-        out2.release()
+        out.release()
         
-        # Verify output files exist and have content
-        if not output1_path.exists() or output1_path.stat().st_size == 0:
-            raise RuntimeError("Model 1 output video was not created properly")
-        if not output2_path.exists() or output2_path.stat().st_size == 0:
-            raise RuntimeError("Model 2 output video was not created properly")
+        # Verify output file exists and has content
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("Output video was not created properly")
         
-        # Generate comparison graph
+        # Generate detection graph
         graph_path = output_dir / f"detections_graph_{timestamp}.png"
         plt.figure(figsize=(12, 6))
-        plt.plot(frame_numbers, detections_per_frame1, label=f'Model 1: {self.model1_name}', linewidth=2, alpha=0.8)
-        plt.plot(frame_numbers, detections_per_frame2, label=f'Model 2: {self.model2_name}', linewidth=2, alpha=0.8)
+        plt.plot(frame_numbers, detections_per_frame, label='Drone Detections', linewidth=2, alpha=0.8, color='#FF6B6B')
         plt.xlabel('Frame Number', fontsize=12)
         plt.ylabel('Number of Detections', fontsize=12)
-        plt.title('Detections Per Frame Comparison', fontsize=14, fontweight='bold')
+        plt.title('Drone Detections Per Frame', fontsize=14, fontweight='bold')
         plt.legend(fontsize=10)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(graph_path, dpi=150, bbox_inches='tight')
         plt.close()
         
+        # Calculate statistics
+        avg_detections = total_detections / frame_count if frame_count > 0 else 0
+        max_detections = max(detections_per_frame) if detections_per_frame else 0
+        
         stats = f"""
-        **Processed {frame_count} frames**
+        ### Detection Statistics
         
-        **Model 1 ({self.model1_name})**: {total_detections1} total detections ({total_detections1/frame_count:.2f} per frame)
-        **Model 2 ({self.model2_name})**: {total_detections2} total detections ({total_detections2/frame_count:.2f} per frame)
+        **{self.model_name}**:
+        - Total Detections: {total_detections}
+        - Average per Frame: {avg_detections:.2f}
+        - Peak Detections: {max_detections}
         
-        **Output files created:**
-        - Model 1: {output1_path.stat().st_size / 1024 / 1024:.2f} MB
-        - Model 2: {output2_path.stat().st_size / 1024 / 1024:.2f} MB
+        **Video Info**:
+        - Total Frames: {frame_count}
+        - FPS: {fps}
+        - Duration: {frame_count/fps:.1f}s
         """
         
-        return str(output1_path), str(output2_path), str(graph_path), stats
+        return str(output_path), str(graph_path), stats
 
 
-def create_interface(model1_path, model2_path):
+def create_interface(model_path):
     """Create Gradio interface"""
-    comparator = ModelComparison(model1_path, model2_path)
+    detector = DroneDetector(model_path)
     
+    with gr.Blocks(title="Drone Detection") as demo:
+        gr.Markdown("# 🚁 Drone Detection")
+        gr.Markdown("Detect drones in thermal/IR images and videos")
     with gr.Blocks(title="Drone Detection Model Comparison") as demo:
         gr.Markdown("# 🚁 Drone Detection Model Comparison")
         gr.Markdown("Compare two YOLO models for drone detection side-by-side")

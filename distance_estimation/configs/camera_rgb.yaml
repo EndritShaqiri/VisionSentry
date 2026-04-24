@@ -1,0 +1,8 @@
+name: generic_rgb_camera
+fx_px: null
+fy_px: null
+hfov_deg: null
+vfov_deg: null
+default_hfov_deg: 84.0
+default_vfov_deg: 63.0
+notes: "Conservative wide-angle RGB defaults. Override with the real camera intrinsics or FOV whenever available."

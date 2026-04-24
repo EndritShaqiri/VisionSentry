@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .video-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        .video-wrapper {
+            flex: 1;
+            max-width: 45%;
+        }
+        video {
+            width: 100%;
+            height: auto;
+        }
+        h3 {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="video-container">
+        <div class="video-wrapper">
+            <h3>Model 1</h3>
+            <video id="video1" controls></video>
+        </div>
+        <div class="video-wrapper">
+            <h3>Model 2</h3>
+            <video id="video2" controls></video>
+        </div>
+    </div>
+
+    <script>
+        function syncVideos(video1Path, video2Path) {
+            const video1 = document.getElementById('video1');
+            const video2 = document.getElementById('video2');
+            
+            video1.src = video1Path;
+            video2.src = video2Path;
+            
+            // Sync playback
+            video1.addEventListener('play', () => {
+                video2.currentTime = video1.currentTime;
+                video2.play();
+            });
+            
+            video1.addEventListener('pause', () => {
+                video2.pause();
+            });
+            
+            video1.addEventListener('seeked', () => {
+                video2.currentTime = video1.currentTime;
+            });
+            
+            // Also sync from video2 to video1
+            video2.addEventListener('play', () => {
+                video1.currentTime = video2.currentTime;
+                video1.play();
+            });
+            
+            video2.addEventListener('pause', () => {
+                video1.pause();
+            });
+            
+            video2.addEventListener('seeked', () => {
+                video1.currentTime = video2.currentTime;
+            });
+        }
+    </script>
+</body>
+</html>
