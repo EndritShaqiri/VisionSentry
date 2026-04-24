@@ -460,8 +460,14 @@ def create_interface(model_path):
 
 
 if __name__ == "__main__":
+    import os
+
     # Model path - using thermal/IR model
     model_path = "weights/best.pt"
+
+    # Respect Render's injected PORT, or GRADIO_SERVER_PORT, otherwise default to 7860
+    port = int(os.environ.get("PORT", os.environ.get("GRADIO_SERVER_PORT", 7860)))
+    host = os.environ.get("HOST", os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0"))
 
     # Clean, professional theme (Gradio 6: pass theme to launch)
     theme = gr.themes.Default(
@@ -484,4 +490,4 @@ if __name__ == "__main__":
 
     # Create and launch interface
     demo = create_interface(model_path)
-    demo.launch(server_name="0.0.0.0", server_port=7860, theme=theme)
+    demo.launch(server_name=host, server_port=port, theme=theme)

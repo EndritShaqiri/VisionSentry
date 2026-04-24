@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies for OpenCV, matplotlib, and torch
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -12,21 +12,21 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Install Python dependencies first (better layer caching)
 COPY requirements_app.txt .
-COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements_app.txt
 
-# Copy application files
+# Copy application files and all runtime dependencies
 COPY drone_detection_app.py .
 COPY weights/ ./weights/
+COPY distance_estimation/ ./distance_estimation/
+COPY configs/ ./configs/
+COPY src/ ./src/
 
-# Expose port
+# Expose default port; Render will also inject PORT
 EXPOSE 7860
 
-# Set environment variables
+# Gradio defaults (drone_detection_app.py also honors PORT/HOST env vars)
 ENV GRADIO_SERVER_NAME=0.0.0.0
 ENV GRADIO_SERVER_PORT=7860
 
