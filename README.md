@@ -1,8 +1,9 @@
 # VisionSentry: Thermal UAV Detection + Tracking Baseline
 
-Clean, modular, production-ready baseline for **thermal/infrared UAV detection and tracking** using:
+Production-ready baseline for **thermal/infrared UAV detection and tracking** using:
 - **YOLOv12-style detector workflow** (Ultralytics API)
 - **BoT-SORT tracker**
+- **Optional distance estimation subsystem** under `distance_estimation/`
 - Optional **ReID toggle** (off by default)
 - **MOT-format export**: `frame,id,x,y,w,h,score,-1,-1,-1`
 
@@ -11,6 +12,37 @@ This repository supports both:
 - **multi-UAV experiments** when the raw annotations provide multiple boxes per frame
 
 The runtime pipeline is intentionally general-purpose and not tied to any competition-specific conventions.
+
+## Demo Website
+
+https://visionsentry-deployment.onrender.com/
+
+## Demo Video
+
+[Watch Demo Video (Google Drive)](https://drive.google.com/file/d/1D61qeDgZ1JTJ5EclSEITE89aEmOApSpu/view?usp=sharing)
+
+[![VisionSentry Demo Video](https://drive.google.com/thumbnail?id=1D61qeDgZ1JTJ5EclSEITE89aEmOApSpu&sz=w1000)](https://drive.google.com/file/d/1D61qeDgZ1JTJ5EclSEITE89aEmOApSpu/view?usp=sharing)
+
+## Run Web Visualization
+
+Run the Gradio web app locally:
+
+```bash
+pip install -r requirements_app.txt
+python drone_detection_app.py
+```
+
+Run with Docker:
+
+```bash
+docker build -t visionsentry:latest .
+docker run --rm -p 7860:7860 --name visionsentry_local visionsentry:latest
+```
+
+Then open:
+
+`http://127.0.0.1:7860`
+
 
 ## 1) Project Structure
 
@@ -34,6 +66,15 @@ project_root/
   notebooks/
     train_detector.ipynb
     infer_and_track.ipynb
+  distance_estimation/
+    configs/
+      ranging.yaml
+      camera_ir.yaml
+      camera_rgb.yaml
+    weights/
+    estimator.py
+    temporal.py
+    train.py
   runs/
   src/
     detection/
@@ -258,6 +299,30 @@ Outputs:
 - optional annotated frames (`frames/`)
 - optional `detections.csv`
 
+### Distance estimation on images or videos
+
+Distance-estimation code lives entirely under `distance_estimation/`.
+
+```bash
+python -m src.detection.infer \
+  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
+  --source data/sample.mp4 \
+  --imgsz 960 \
+  --conf 0.25 \
+  --iou 0.5 \
+  --device 0 \
+  --ranging true \
+  --ranging_config distance_estimation/configs/ranging.yaml \
+  --camera_config distance_estimation/configs/camera_ir.yaml \
+  --ranging_modality ir \
+  --project runs/predict \
+  --name thermal_detect_with_range
+```
+
+Additional outputs when ranging is enabled:
+- `detections.csv` with distance, uncertainty, confidence, and range-bin columns
+- `ranging_runtime.yaml` containing the effective distance-estimation config
+
 ## 7) BoT-SORT Tracking Inference
 
 ```bash
@@ -280,10 +345,34 @@ Outputs:
 - optional annotated frames: `frames/`
 - MOT file: `tracks_mot.txt` with rows:
   `frame,id,x,y,w,h,score,-1,-1,-1`
+- `track_ranges.csv` when distance estimation is enabled
 
 The same tracker entry point works for:
 - single-UAV sequences
 - multi-UAV sequences with multiple detections per frame
+
+### Tracking + distance estimation
+
+```bash
+python -m src.tracking.run_tracker \
+  --weights runs/detect/yolo12n_thermal_uav/weights/best.pt \
+  --source data/sample.mp4 \
+  --tracker configs/tracker_botsort.yaml \
+  --conf 0.25 \
+  --iou 0.5 \
+  --imgsz 960 \
+  --device 0 \
+  --project runs/track \
+  --name thermal_track_with_range \
+  --save_video true \
+  --save_frames true \
+  --ranging true \
+  --ranging_config distance_estimation/configs/ranging.yaml \
+  --camera_config distance_estimation/configs/camera_ir.yaml \
+  --ranging_modality ir
+```
+
+The tracking pipeline keeps MOT export unchanged for compatibility and writes smoothed per-track distance estimates to `track_ranges.csv`.
 
 ## 8) ReID Toggle
 
