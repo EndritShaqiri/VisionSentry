@@ -1,0 +1,24 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+
+# Runtime outputs
+runs/*
+!runs/.gitkeep
+
+# Optional local datasets/artifacts
+data/thermal_uav/images/**/*
+data/thermal_uav/labels/**/*
+!data/thermal_uav/images/train/.gitkeep
+!data/thermal_uav/images/val/.gitkeep
+!data/thermal_uav/images/test/.gitkeep
+!data/thermal_uav/labels/train/.gitkeep
+!data/thermal_uav/labels/val/.gitkeep
+!data/thermal_uav/labels/test/.gitkeep
